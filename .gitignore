@@ -1,0 +1,16 @@
+node_modules/
+dist/
+coverage/
+.env
+.env.*
+!.env.example
+*.sqlite
+*.sqlite-*
+*.sqlite.before-*
+*.db
+*.db-*
+*.pem
+*.key
+test-results/
+playwright-report/
+*.log
