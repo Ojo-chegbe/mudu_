@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { text } from '../../packages/exam-core/engine.ts';
 import { DomainError } from '../../packages/exam-core/model.ts';
-import { bankId } from './question-bank.ts';
+import { bankId, QuestionBank } from './question-bank.ts';
 import { parseGeneratedQuestions, unreadableGenerationMessage } from './generation-output.ts';
 import { digest } from './security.ts';
 import { transaction } from './database.ts';
@@ -123,7 +123,15 @@ export class QuestionGeneration {
     return {
       id,
       status: String(row.status),
-      questionIds: JSON.parse(String(row.result)) as string[],
+      questionIds: (JSON.parse(String(row.result)) as string[]).filter((questionId) =>
+        Boolean(
+          this.store.db
+            .prepare(
+              'SELECT id FROM bank_questions WHERE id=? AND owner_id=? AND id NOT IN (SELECT question_id FROM bank_deleted_questions)',
+            )
+            .get(questionId, owner),
+        ),
+      ),
       error: row.error === 'Expected an object.' ? unreadableGenerationMessage : String(row.error),
     };
   }
@@ -147,6 +155,8 @@ export class QuestionGeneration {
       throw new DomainError('Generate between 1 and 10 questions at a time.');
     if (input.consent !== true)
       throw new DomainError('Confirm that these notes may be sent to Google’s free AI service.');
+    const bank = new QuestionBank(this.store);
+    const project = bank.project(owner, input.projectId);
     const fingerprint = digest(
       JSON.stringify({
         source,
@@ -156,6 +166,7 @@ export class QuestionGeneration {
         difficulty,
         count: input.count,
         model: gemmaModel,
+        projectId: project.id,
       }),
     );
     const db = this.store.db;
@@ -171,6 +182,7 @@ export class QuestionGeneration {
         return this.job(id, owner);
       }
       const availability = this.availability();
+      bank.project(owner, project.id, true);
       if (!availability.available) throw new DomainError(availability.message, 503);
       db.prepare("INSERT INTO bank_generations VALUES(?,?,?,'running',?,'[]','')").run(
         id,
@@ -215,6 +227,7 @@ SOURCE DATA (JSON string): ${JSON.stringify(source)}`;
         difficulty,
       });
       transaction(db, () => {
+        bank.project(owner, project.id, true);
         const job = this.job(id, owner);
         if (job.status !== 'running')
           throw new DomainError('Generation expired. Start a new request.', 409);
@@ -235,16 +248,22 @@ SOURCE DATA (JSON string): ${JSON.stringify(source)}`;
             serialized,
             this.store.now(),
           );
+          db.prepare('INSERT INTO bank_question_projects VALUES(?,?)').run(questionId, project.id);
           return questionId;
         });
         db.prepare("UPDATE bank_generations SET status='completed',result=? WHERE id=?").run(
           JSON.stringify(ids),
           id,
         );
+        db.prepare('UPDATE bank_projects SET updated_at=? WHERE id=?').run(
+          this.store.now(),
+          project.id,
+        );
         this.store.event(null, owner, 'bank_drafts_generated', {
           requestId: id,
           count: ids.length,
           model: gemmaModel,
+          projectId: project.id,
         });
       });
       return this.job(id, owner);

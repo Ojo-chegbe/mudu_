@@ -1,13 +1,21 @@
 import { useEffect, useRef, useState } from 'react';
 import { emptyBankContent, questionTypes } from '../../packages/contracts/question-bank.ts';
-import type { BankContent, BankItem, BankStatus } from '../../packages/contracts/question-bank.ts';
-import { api, errorMessage } from './api.ts';
+import type {
+  BankContent,
+  BankItem,
+  BankStatus,
+  BankProject,
+} from '../../packages/contracts/question-bank.ts';
+import { api, ApiError, errorMessage } from './api.ts';
 import { browserId } from './browser-id.ts';
 import { Dialog, Icon, Loading, Notice } from './ui.tsx';
 import { QuestionPreview } from './question-bank.tsx';
+import { projectHref } from './bank-projects.tsx';
 
 export function BankEditor({ id }: { id?: string }) {
-  const key = `mudu.bank-draft.${id ?? 'new'}`;
+  const requestedProject = new URLSearchParams(location.search).get('project');
+  const key = `mudu.bank-draft.${id ?? `new.${requestedProject}`}`;
+  const [project, setProject] = useState<BankProject | null>(null);
   const [item, setItem] = useState<BankItem | null>(null);
   const [draft, setDraft] = useState<BankItem | null>(null);
   const [error, setError] = useState('');
@@ -15,17 +23,25 @@ export function BankEditor({ id }: { id?: string }) {
   const [stored, setStored] = useState(true);
   const [reviewed, setReviewed] = useState(false);
   const [archive, setArchive] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const leaving = useRef(false);
   const dirty = JSON.stringify(draft) !== JSON.stringify(item);
   useEffect(() => {
     let alive = true;
     const load = async () => {
       try {
+        if (!id && !requestedProject)
+          throw new ApiError('Open a project to write a question.', 400);
+        const context = !id
+          ? await api<BankProject>(`/question-bank/projects/${requestedProject}`)
+          : null;
         const saved: BankItem = id
           ? await api(`/question-bank/${id}`)
           : {
               ...emptyBankContent(),
               id: browserId(),
+              projectId: context!.id,
+              course: context!.course,
               revision: 0,
               status: 'draft',
               updatedAt: 0,
@@ -34,6 +50,10 @@ export function BankEditor({ id }: { id?: string }) {
               model: null,
             };
         if (!alive) return;
+        const loadedProject =
+          context ?? (await api<BankProject>(`/question-bank/projects/${saved.projectId}`));
+        if (!alive) return;
+        setProject(loadedProject);
         setItem(saved);
         setDraft(saved);
         try {
@@ -42,6 +62,7 @@ export function BankEditor({ id }: { id?: string }) {
             if (
               typeof cached.id !== 'string' ||
               (id && cached.id !== id) ||
+              (cached.projectId && cached.projectId !== saved.projectId) ||
               !Number.isInteger(cached.revision) ||
               !cached.question ||
               typeof cached.question.prompt !== 'string' ||
@@ -55,7 +76,7 @@ export function BankEditor({ id }: { id?: string }) {
               typeof cached.explanation !== 'string'
             )
               throw new Error('Invalid draft');
-            setDraft(cached);
+            setDraft({ ...cached, projectId: saved.projectId });
           }
         } catch {
           setStored(false);
@@ -69,7 +90,7 @@ export function BankEditor({ id }: { id?: string }) {
     return () => {
       alive = false;
     };
-  }, [id, key]);
+  }, [id, key, requestedProject]);
   useEffect(() => {
     if (!draft || !item || leaving.current) return;
     try {
@@ -87,7 +108,26 @@ export function BankEditor({ id }: { id?: string }) {
     window.addEventListener('beforeunload', guard);
     return () => window.removeEventListener('beforeunload', guard);
   }, [dirty]);
-  if (!draft || !item) return error ? <Notice>{error}</Notice> : <Loading />;
+  if (!draft || !item || !project)
+    return error ? (
+      <div className="bank-page">
+        <a className="back-link" href="/question-bank">
+          All projects
+        </a>
+        <Notice>{error}</Notice>
+      </div>
+    ) : (
+      <Loading />
+    );
+  let returnHref = projectHref(project.id);
+  const requestedReturn = new URLSearchParams(location.search).get('return');
+  if (requestedReturn) {
+    try {
+      const target = new URL(requestedReturn, location.origin);
+      if (target.origin === location.origin && target.pathname === projectHref(project.id))
+        returnHref = target.pathname + target.search;
+    } catch {}
+  }
   const q = draft.question;
   const patch = (value: Partial<BankContent>) => {
     setDraft({ ...draft, ...value });
@@ -108,7 +148,10 @@ export function BankEditor({ id }: { id?: string }) {
       try {
         sessionStorage.removeItem(key);
       } catch {}
-      location.href = `/question-bank?status=${status}&saved=${status}`;
+      const destination = new URL(returnHref, location.origin);
+      if (!requestedReturn) destination.searchParams.set('status', status);
+      destination.searchParams.set('saved', status);
+      location.href = destination.pathname + destination.search;
     } catch (e) {
       setError(errorMessage(e));
       setBusy(false);
@@ -117,9 +160,9 @@ export function BankEditor({ id }: { id?: string }) {
   }
   return (
     <div className="bank-page bank-editor">
-      <a className="back-link" href="/question-bank">
+      <a className="back-link" href={returnHref}>
         <Icon name="back" size={16} />
-        Question bank
+        {project.name}
       </a>
       <div className="page-heading">
         <div>
@@ -139,6 +182,11 @@ export function BankEditor({ id }: { id?: string }) {
         </div>
       </div>
       {error && <Notice>{error}</Notice>}
+      {project.archived && (
+        <Notice kind="info">
+          This project is archived. Restore it in project settings before editing.
+        </Notice>
+      )}
       {draft.revision !== item.revision && (
         <Notice>
           Your tab draft is based on an older revision. Copy any edits you want to keep, then reopen
@@ -151,7 +199,7 @@ export function BankEditor({ id }: { id?: string }) {
           void save('draft');
         }}
       >
-        <fieldset disabled={busy} className="assessment-fields">
+        <fieldset disabled={busy || project.archived} className="assessment-fields">
           <section className="panel padded">
             <div className="bank-grid">
               <label>
@@ -391,6 +439,14 @@ export function BankEditor({ id }: { id?: string }) {
                   Archive question
                 </button>
               )}
+              <button
+                type="button"
+                className="text-button question-delete-action"
+                onClick={() => setDeleting(true)}
+              >
+                <Icon name="trash" size={16} />
+                Delete question
+              </button>
             </div>
           )}
         </fieldset>
@@ -407,6 +463,43 @@ export function BankEditor({ id }: { id?: string }) {
             It will be hidden from the assessment picker. Existing assessments stay unchanged. You
             can restore it by reviewing and approving it again.
           </p>
+        </Dialog>
+      )}
+      {deleting && (
+        <Dialog
+          title="Delete this question?"
+          confirmLabel="Delete question"
+          danger
+          busy={busy}
+          onClose={() => setDeleting(false)}
+          confirm={async () => {
+            setBusy(true);
+            setError('');
+            try {
+              await api('/question-bank/review', {
+                method: 'POST',
+                body: { action: 'delete', selection: [{ id: item.id, revision: item.revision }] },
+              });
+              leaving.current = true;
+              try {
+                sessionStorage.removeItem(key);
+              } catch {}
+              const destination = new URL(returnHref, location.origin);
+              destination.searchParams.delete('saved');
+              destination.searchParams.set('deleted', '1');
+              location.href = destination.pathname + destination.search;
+            } catch (e) {
+              setError(errorMessage(e));
+              setBusy(false);
+              setDeleting(false);
+            }
+          }}
+        >
+          <p>
+            This question will be removed from the project. Copies already used in assessments will
+            stay unchanged.
+          </p>
+          {dirty && <p className="field-hint">Your unsaved edits will also be discarded.</p>}
         </Dialog>
       )}
     </div>

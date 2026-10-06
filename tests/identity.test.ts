@@ -195,7 +195,10 @@ test('declining one registration does not delete the account or its other regist
 });
 test('candidate passphrases retain exact whitespace and registration settings are validated', () => {
   assert.equal(accountPassword('  my memorable phrase  ', true), '  my memorable phrase  ');
-  assert.throws(() => accountPassword('too-short', true), /15/);
+  assert.equal(accountPassword('Cloud123', true), 'Cloud123');
+  assert.throws(() => accountPassword('short12', true), /8/);
+  assert.throws(() => accountPassword('        ', true), /8/);
+  assert.throws(() => accountPassword('x'.repeat(129), true), /128/);
   assert.throws(
     () => registrationConfig({ accessMode: 'accounts', registrationPolicy: 'roster' }, 0, 1000),
     /roster/,

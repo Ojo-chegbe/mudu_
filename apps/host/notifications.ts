@@ -41,9 +41,9 @@ export function notificationFeed(db: DatabaseSync, session: Session): Notificati
         .prepare(
           `SELECT r.*,a.definition,p.name FROM registrations r
         JOIN assessments a ON a.id=r.assessment_id JOIN accounts p ON p.id=r.account_id
-        WHERE r.status='pending'`,
+        JOIN assessment_owners o ON o.assessment_id=a.id WHERE r.status='pending' AND o.owner_id=?`,
         )
-        .all();
+        .all(session.principal_id);
       for (const r of requests)
         put(
           `registration:${r.id}`,
@@ -55,13 +55,13 @@ export function notificationFeed(db: DatabaseSync, session: Session): Notificati
       const essays = db
         .prepare(
           `SELECT DISTINCT t.id,t.submitted_at,s.assessment_id,s.snapshot,c.name
-        FROM attempts t JOIN sittings s ON s.id=t.sitting_id JOIN candidates c ON c.id=t.candidate_id
+        FROM attempts t JOIN sittings s ON s.id=t.sitting_id JOIN assessment_owners o ON o.assessment_id=s.assessment_id JOIN candidates c ON c.id=t.candidate_id
         JOIN responses r ON r.attempt_id=t.id JOIN json_each(s.snapshot,'$.questions') q ON json_extract(q.value,'$.id')=r.question_id
         LEFT JOIN manual_marks m ON m.attempt_id=t.id AND m.question_id=r.question_id
         WHERE t.status<>'active' AND json_extract(q.value,'$.type')='short'
-        AND length(trim(json_extract(r.value,'$')))>0 AND m.attempt_id IS NULL`,
+        AND length(trim(json_extract(r.value,'$')))>0 AND m.attempt_id IS NULL AND o.owner_id=?`,
         )
-        .all();
+        .all(session.principal_id);
       for (const r of essays)
         put(
           `grading:${r.id}`,
@@ -71,6 +71,22 @@ export function notificationFeed(db: DatabaseSync, session: Session): Notificati
           Number(r.submitted_at),
         );
     } else {
+      const cached = db
+        .prepare(
+          "SELECT detail FROM events WHERE actor_id=? AND kind='candidate_cloud_rosters_cache' ORDER BY id DESC LIMIT 1",
+        )
+        .get(session.account_id!);
+      if (cached)
+        for (const group of JSON.parse(String(cached.detail))
+          .groups as import('../../packages/contracts/cloud-rosters.ts').CloudCandidateGroup[])
+          if (group.member.status !== 'pending')
+            put(
+              `roster-decision:${group.id}:${group.member.status}:${group.member.reviewedAt}`,
+              group.member.status === 'approved' ? 'Added to a group' : 'Group membership declined',
+              group.name,
+              `/join/roster/${group.token}`,
+              group.member.reviewedAt ?? group.member.requestedAt,
+            );
       for (const r of db
         .prepare(
           `SELECT m.*,r.name,r.token FROM roster_members m JOIN rosters r ON r.id=m.roster_id WHERE m.account_id=? AND m.status<>'pending'`,

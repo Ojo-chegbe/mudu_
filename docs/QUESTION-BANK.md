@@ -2,17 +2,40 @@
 
 ## Administrator workflow
 
-Open **Question bank** in the sidebar. Write a question manually or use **Generate from notes**.
+Open **Question bank** in the sidebar to see your projects. Create a project for a course, topic
+or examination, with a name, optional subject and description. Each project shows its question
+count, ready-to-use and needs-review counts, and last updated date. Search projects by name,
+subject or description; archived projects have their own view.
+
+Open a project and choose **Write question** or **Generate from notes**. Questions and generated
+drafts save directly into that project. New-question and generation drafts are kept separately
+for each project in this tab. After saving or reviewing, return to the same project.
 Questions support multiple choice, multiple select (exact-match scoring), and written answers.
 Add a subject, topic, difficulty, tags and an explanation or marking guide. Save unfinished work
 as a draft. Review the wording, correct answers and marks, then explicitly approve the question.
 
-The bank separates **Ready to use**, **Needs review** and **Archived**. Search spans question
+Each project separates **Ready to use**, **Needs review** and **Archived**. Search spans question
 text, subject, topic and tags. Type/difficulty filters combine with search. Lists are paginated.
-Archived questions can be restored by reviewing and approving them again; there is no hard delete.
+Archived questions can be restored by reviewing and approving them again. Delete removes questions
+from the bank and assessment selection; stored audit history and existing assessment copies remain.
+Reviewers can approve or delete a question from its editor. Select multiple questions in a project
+or the generated-question review screen to approve or delete them together. Bulk approval requires
+explicit lecturer confirmation and saves inline edits. Bulk actions validate all selected revisions,
+ownership, project availability and answer structure before committing any changes.
 
-In assessment creation or editing, choose **Add from question bank**. Preview answers and select
-multiple approved questions, including across pages. The server rechecks ownership, approval and
+The project workspace initially shows drafts and approved questions together, with archived questions
+in a separate view. Search remains visible; type and difficulty filters expand when needed. Editing
+and returning to the project preserves the current filters and page. Answer previews avoid repeating
+the prompt. Selection actions appear only while questions are selected.
+
+Project settings let you rename a project, edit its subject/description, archive it or restore it.
+Archiving retains all questions but prevents authoring and assessment selection until restored.
+Select questions inside an active project and choose **Move to project** to reorganize them.
+Moves keep approval and revision history; stale or unauthorized moves are rejected atomically.
+
+In assessment creation or editing, choose **Add from question bank**, then browse your projects.
+Preview answers and select multiple approved questions, including across pages and projects.
+Selection is kept when returning to the project list. The server rechecks ownership, project availability, approval and
 revision before returning independent copies. These copies enter the existing assessment draft
 workflow. Later bank changes never modify an assessment definition, sitting, answers or grades.
 
@@ -24,7 +47,7 @@ workflow. Later bank changes never modify an assessment definition, sitting, ans
    `npm run dev`, `npm run dev:host` and `npm start` load `.env` for the Host automatically;
    missing files are allowed and existing process variables take priority. Restart after editing.
    Never use a `VITE_` variable, commit a key, or distribute it with a Host installer.
-3. Lecturers open **Question bank → Generate from notes**, supply their material and generate.
+3. Lecturers open **Question bank → a project → Generate from notes**, supply their material and generate.
    They do not configure API keys or provider settings. Candidates have no access to these APIs.
 
 The key is read from the server environment at startup, including the local `.env` loaded by Node. There is no browser key-entry UI and
@@ -94,7 +117,12 @@ Reference documentation:
   while authoring. Signing out clears this tab's drafts; use a trusted administrator browser.
 - Manual authoring, review and assessment reuse work without internet. Hosted generation needs
   internet. The local examination engine has no dependency on the AI service.
-- Schema v8 is additive. Existing data is preserved, with the established pre-migration snapshot.
+- Schema v9 adds projects and question membership without rewriting question content. Existing
+  questions are placed in one **Imported questions** project per owner. Question IDs, approvals,
+  revisions, historical generations and assessment copies are preserved. An existing database is
+  snapshotted before the migration; migration and project membership changes are transactional.
+- Schema v10 adds durable deletion records. Deleted questions remain absent after refresh/restart,
+  including when reopening a past generated batch. Historical question revisions are retained.
 - Document upload requires administrator authentication and CSRF verification, including a second
   authentication check after parsing. Uploaded bytes never become public URLs or permanent files.
 - Parsing runs in isolated workers without inherited environment secrets, with a 25-second timeout,
@@ -115,7 +143,8 @@ Revision records are stored for audit, but the current UI edits only the current
 
 Automated tests cover approval validation, stale writes, owner isolation, independent assessment
 copies, pagination, retry safety, malformed output, non-blocking source references, concurrency, authorisation,
-quota handling, API boundaries and v7 migration/reopen persistence. Provider responses are mocked;
+quota handling, API boundaries, project isolation, moves, archiving, generation during project
+changes, and v7/v8 migration/reopen persistence. Provider responses are mocked;
 live generation requires a configured key. A two-question live Gemma smoke test with synthetic notes
 passed after the response-parser fix. This does not verify generation quality for every uploaded
 document. Run `node --env-file-if-exists=.env scripts/check-ai.ts` for an explicit one-request smoke

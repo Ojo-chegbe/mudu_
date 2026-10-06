@@ -1,12 +1,22 @@
 import { useEffect, useState } from 'react';
-import type { BankContent, BankItem, BankStatus } from '../../packages/contracts/question-bank.ts';
+import type {
+  BankContent,
+  BankItem,
+  BankStatus,
+  BankProject,
+  BankQuestion,
+} from '../../packages/contracts/question-bank.ts';
 import { questionTypes } from '../../packages/contracts/question-bank.ts';
 import { api, errorMessage } from './api.ts';
-import { Icon, Loading, Notice } from './ui.tsx';
+import { Dialog, Icon, Loading, Notice } from './ui.tsx';
+import { projectHref } from './bank-projects.tsx';
 
 interface GeneratedQuestionsReviewProps {
+  project: BankProject;
   questionIds: string[];
   onGenerateMore: () => void;
+  onAdd?: (questions: BankQuestion[]) => void;
+  remaining?: number;
 }
 
 function validateItem(item: BankItem): string | null {
@@ -32,8 +42,11 @@ function validateItem(item: BankItem): string | null {
 }
 
 export function GeneratedQuestionsReview({
+  project,
   questionIds,
   onGenerateMore,
+  onAdd,
+  remaining = 200,
 }: GeneratedQuestionsReviewProps) {
   const [questions, setQuestions] = useState<BankItem[]>([]);
   const [savedSnapshots, setSavedSnapshots] = useState<Record<string, string>>({});
@@ -43,6 +56,10 @@ export function GeneratedQuestionsReview({
   const [itemErrors, setItemErrors] = useState<Record<string, string>>({});
   const [itemSuccess, setItemSuccess] = useState<Record<string, string>>({});
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [reviewAction, setReviewAction] = useState<'approve' | 'delete' | null>(null);
+  const [bulkReviewed, setBulkReviewed] = useState(false);
+  const [bulkError, setBulkError] = useState('');
   const [globalNotice, setGlobalNotice] = useState<{
     kind: 'error' | 'success' | 'info';
     message: string;
@@ -182,77 +199,48 @@ export function GeneratedQuestionsReview({
   }
 
   async function discardItem(item: BankItem) {
-    if (!confirm('Discard this question from the generated set?')) return;
-    setItemBusy((prev) => ({ ...prev, [item.id]: true }));
-    try {
-      await api<BankItem>('/question-bank', {
-        method: 'POST',
-        body: {
-          ...item,
-          status: 'archived',
-          expectedRevision: item.revision,
-        },
-      });
-      setQuestions((prev) => prev.filter((q) => q.id !== item.id));
-    } catch (e) {
-      setItemErrors((prev) => ({ ...prev, [item.id]: errorMessage(e) }));
-      setItemBusy((prev) => ({ ...prev, [item.id]: false }));
-    }
+    setSelectedIds([item.id]);
+    setReviewAction('delete');
+    setBulkReviewed(false);
+    setBulkError('');
   }
 
   async function handleApproveAll() {
-    const pending = questions.filter((q) => q.status !== 'approved');
-    if (!pending.length) return;
-
-    const errors: Record<string, string> = {};
-    for (const item of pending) {
-      const err = validateItem(item);
-      if (err) errors[item.id] = err;
-    }
-    if (Object.keys(errors).length > 0) {
-      setItemErrors((prev) => ({ ...prev, ...errors }));
-      setGlobalNotice({
-        kind: 'error',
-        message: 'Some questions could not be approved yet. Please fix the highlighted issues.',
-      });
+    setSelectedIds(
+      questions.filter((q) => q.status !== 'approved' || isItemModified(q)).map((q) => q.id),
+    );
+    setReviewAction('approve');
+    setBulkReviewed(false);
+    setBulkError('');
+  }
+  const approvedToAdd = questions.filter(
+    (item) => item.status === 'approved' && (!selectedIds.length || selectedIds.includes(item.id)),
+  );
+  const modifiedToAdd = approvedToAdd.some(isItemModified);
+  async function addApproved() {
+    if (
+      !onAdd ||
+      bulkBusy ||
+      !approvedToAdd.length ||
+      approvedToAdd.length > remaining ||
+      modifiedToAdd
+    )
       return;
-    }
-
     setBulkBusy(true);
-    setGlobalNotice(null);
-    let count = 0;
-    const updatedList = [...questions];
-
-    for (let i = 0; i < updatedList.length; i++) {
-      const item = updatedList[i];
-      if (item.status === 'approved') continue;
-      try {
-        const saved = await api<BankItem>('/question-bank', {
-          method: 'POST',
-          body: {
-            ...item,
-            status: 'approved',
-            expectedRevision: item.revision,
-          },
-        });
-        updatedList[i] = saved;
-        setSavedSnapshots((prev) => ({ ...prev, [item.id]: JSON.stringify(saved) }));
-        count++;
-      } catch (e) {
-        setItemErrors((prev) => ({ ...prev, [item.id]: errorMessage(e) }));
-      }
-    }
-
-    setQuestions(updatedList);
-    setBulkBusy(false);
-    if (count > 0) {
-      setGlobalNotice({
-        kind: 'success',
-        message: `Approved ${count} question${count > 1 ? 's' : ''}! All approved questions are stored in your Question Bank.`,
+    try {
+      const result = await api<{ questions: BankQuestion[] }>('/question-bank/select', {
+        method: 'POST',
+        body: {
+          selection: approvedToAdd.map((item) => ({ id: item.id, revision: item.revision })),
+        },
       });
+      onAdd(result.questions);
+    } catch (error) {
+      setGlobalNotice({ kind: 'error', message: errorMessage(error) });
+    } finally {
+      setBulkBusy(false);
     }
   }
-
   return (
     <div className="generated-review-container">
       {/* Top Header & Summary Card */}
@@ -264,7 +252,11 @@ export function GeneratedQuestionsReview({
         <div className="generated-hero-content">
           <div className="generated-hero-text">
             <span className="eyebrow">AI GENERATION COMPLETE</span>
-            <h2>{questions.length} Generated Questions Ready for Review</h2>
+            <h2>
+              {questions.length
+                ? `${questions.length} questions to review`
+                : 'No questions left in this set'}
+            </h2>
             <p className="muted">
               Inspect questions below. You can edit prompts, answers, marks, or options directly
               inline, then approve each question individually or all at once.
@@ -310,13 +302,88 @@ export function GeneratedQuestionsReview({
           >
             Generate another set
           </button>
-          <a className="button secondary" href="/question-bank">
-            Question bank
-          </a>
+          {onAdd ? (
+            <button
+              type="button"
+              className="button secondary"
+              disabled={
+                bulkBusy ||
+                Object.values(itemBusy).some(Boolean) ||
+                !approvedToAdd.length ||
+                approvedToAdd.length > remaining ||
+                modifiedToAdd
+              }
+              onClick={() => void addApproved()}
+            >
+              <Icon name="plus" size={16} /> Add {approvedToAdd.length || ''} approved question
+              {approvedToAdd.length === 1 ? '' : 's'} to assessment
+            </button>
+          ) : (
+            <a className="button secondary" href={projectHref(project.id)}>
+              Back to project
+            </a>
+          )}
         </div>
+        {onAdd && (approvedToAdd.length > remaining || modifiedToAdd) && (
+          <p className="field-hint">
+            {modifiedToAdd
+              ? 'Save your edited questions before adding them.'
+              : `Select up to ${remaining} approved questions to fit your paper.`}
+          </p>
+        )}
       </section>
 
       {/* List of All Questions */}
+      {questions.length > 0 && (
+        <div className="question-selection-toolbar">
+          <label className="check-label">
+            <input
+              type="checkbox"
+              disabled={bulkBusy}
+              checked={selectedIds.length === questions.length}
+              onChange={(e) => setSelectedIds(e.target.checked ? questions.map((q) => q.id) : [])}
+            />
+            {selectedIds.length ? `${selectedIds.length} selected` : 'Select questions'}
+          </label>
+          {selectedIds.length > 0 && (
+            <div className="actions">
+              <button
+                type="button"
+                className="button primary"
+                disabled={bulkBusy}
+                onClick={() => {
+                  setReviewAction('approve');
+                  setBulkReviewed(false);
+                  setBulkError('');
+                }}
+              >
+                <Icon name="check" size={16} />
+                Approve selected
+              </button>
+              <button
+                type="button"
+                className="text-button question-delete-action"
+                disabled={bulkBusy}
+                onClick={() => {
+                  setReviewAction('delete');
+                  setBulkError('');
+                }}
+              >
+                <Icon name="trash" size={16} />
+                Delete selected
+              </button>
+              <button
+                type="button"
+                className="text-button"
+                disabled={bulkBusy}
+                onClick={() => setSelectedIds([])}
+              >
+                Clear
+              </button>
+            </div>
+          )}
+        </div>
+      )}
       <div className="generated-questions-list">
         {questions.map((item, index) => {
           const q = item.question;
@@ -335,6 +402,20 @@ export function GeneratedQuestionsReview({
               {/* Card Header Bar */}
               <div className="generated-card-header">
                 <div className="generated-card-title-group">
+                  <input
+                    type="checkbox"
+                    className="generated-question-select"
+                    aria-label={`Select question ${index + 1}`}
+                    checked={selectedIds.includes(item.id)}
+                    disabled={busy}
+                    onChange={(e) =>
+                      setSelectedIds((current) =>
+                        e.target.checked
+                          ? [...current, item.id]
+                          : current.filter((id) => id !== item.id),
+                      )
+                    }
+                  />
                   <span className="question-number-badge">#{index + 1}</span>
                   <span
                     className={`badge ${isApproved ? 'completed' : 'expired'}`}
@@ -399,13 +480,12 @@ export function GeneratedQuestionsReview({
                   )}
                   <button
                     type="button"
-                    className="text-button"
-                    style={{ color: 'var(--muted)', fontSize: '12px' }}
+                    className="text-button question-delete-action"
                     disabled={busy}
                     onClick={() => void discardItem(item)}
-                    title="Remove question from this set"
+                    title="Delete question"
                   >
-                    Discard
+                    <Icon name="trash" size={14} /> Delete
                   </button>
                 </div>
               </div>
@@ -632,6 +712,73 @@ export function GeneratedQuestionsReview({
       </div>
 
       {/* Bottom Sticky Action Bar */}
+      {reviewAction && (
+        <Dialog
+          title={`${reviewAction === 'approve' ? 'Approve' : 'Delete'} ${selectedIds.length} question${selectedIds.length === 1 ? '' : 's'}?`}
+          confirmLabel={reviewAction === 'approve' ? 'Approve selected' : 'Delete selected'}
+          danger={reviewAction === 'delete'}
+          busy={bulkBusy}
+          confirmDisabled={!selectedIds.length || (reviewAction === 'approve' && !bulkReviewed)}
+          onClose={() => setReviewAction(null)}
+          confirm={async () => {
+            setBulkBusy(true);
+            setBulkError('');
+            const selected = questions.filter((q) => selectedIds.includes(q.id));
+            try {
+              const result = await api<{ items: BankItem[] }>('/question-bank/review', {
+                method: 'POST',
+                body: {
+                  action: reviewAction,
+                  reviewed: bulkReviewed,
+                  selection: selected.map((item) => ({
+                    id: item.id,
+                    revision: item.revision,
+                    ...(reviewAction === 'approve' ? { content: item } : {}),
+                  })),
+                },
+              });
+              if (reviewAction === 'approve') {
+                const updated = result.items;
+                setQuestions((current) =>
+                  current.map((q) => updated.find((item) => item.id === q.id) ?? q),
+                );
+                setSavedSnapshots((current) => ({
+                  ...current,
+                  ...Object.fromEntries(updated.map((q) => [q.id, JSON.stringify(q)])),
+                }));
+              } else setQuestions((current) => current.filter((q) => !selectedIds.includes(q.id)));
+              setGlobalNotice({
+                kind: 'success',
+                message: `${selected.length} question${selected.length === 1 ? '' : 's'} ${reviewAction === 'approve' ? 'approved' : 'deleted'}.`,
+              });
+              setSelectedIds([]);
+              setReviewAction(null);
+            } catch (e) {
+              setBulkError(errorMessage(e));
+            } finally {
+              setBulkBusy(false);
+            }
+          }}
+        >
+          {bulkError && <Notice>{bulkError}</Notice>}
+          {reviewAction === 'approve' ? (
+            <label className="check-label">
+              <input
+                type="checkbox"
+                checked={bulkReviewed}
+                disabled={bulkBusy}
+                onChange={(e) => setBulkReviewed(e.target.checked)}
+              />
+              I have reviewed these questions, answers and marks. My edits will be saved.
+            </label>
+          ) : (
+            <p>
+              The selected questions will be deleted from this project. Existing assessments stay
+              unchanged.
+            </p>
+          )}
+        </Dialog>
+      )}
       <section className="panel padded generated-review-footer">
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <span style={{ fontWeight: 600, fontSize: '14px' }}>
@@ -653,8 +800,8 @@ export function GeneratedQuestionsReview({
             <Icon name="check" size={16} />
             {draftCount === 0 ? 'All approved' : `Approve remaining (${draftCount})`}
           </button>
-          <a className="button secondary" href="/question-bank">
-            Go to Question Bank
+          <a className="button secondary" href={projectHref(project.id)}>
+            Back to project
           </a>
           <button type="button" className="text-button" onClick={onGenerateMore}>
             Generate another set

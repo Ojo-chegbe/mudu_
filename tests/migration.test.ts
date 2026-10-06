@@ -9,6 +9,61 @@ import { ExamStore } from '../apps/host/store.ts';
 import { IdentityService } from '../apps/host/identity.ts';
 import { assessment } from './fixtures.ts';
 
+test('v12 workspace migration preserves the Host password, sessions and creation references', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'mudu-workspace-migration-'));
+  const path = join(directory, 'exam.sqlite');
+  let db = openDatabase(path);
+  try {
+    const store = new ExamStore(db);
+    db.prepare('INSERT INTO administrators VALUES(?,?,?,1)').run(
+      'host',
+      'Original',
+      'original-verifier',
+    );
+    const exam = assessment();
+    store.createAssessment(exam, [], 'host');
+    db.prepare('INSERT INTO assessment_creations VALUES(?,?,?)').run(
+      'host',
+      'original-request',
+      exam.id,
+    );
+    const session = store.createSession('admin', 'host', null);
+    db.exec(`PRAGMA foreign_keys=OFF;
+      DROP TABLE workspace_connections; DROP TABLE account_preferences; DROP TABLE admin_device_sessions; DROP TABLE admin_device_access; DROP TABLE password_recovery; DROP TABLE offline_candidate_sessions; DROP TABLE local_admission; DROP TABLE local_preparations; DROP TABLE authoring_drafts; DROP TABLE candidate_provider_identities; DROP TABLE cloud_sync_jobs; DROP TABLE cloud_instance; DROP TABLE provider_sessions; DROP TABLE admin_provider_identities; DROP TABLE assessment_owners;
+      CREATE TABLE administrators_v12 (id TEXT PRIMARY KEY,name TEXT NOT NULL,password_hash TEXT NOT NULL,
+        singleton INTEGER NOT NULL UNIQUE CHECK(singleton=1)) STRICT;
+      INSERT INTO administrators_v12 SELECT * FROM administrators;
+      DROP TABLE administrators; ALTER TABLE administrators_v12 RENAME TO administrators;
+      PRAGMA user_version=12; PRAGMA foreign_keys=ON;`);
+    db.close();
+    db = openDatabase(path);
+    const migrated = new ExamStore(db);
+    assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 20);
+    assert.equal(
+      db.prepare('SELECT password_hash FROM administrators WHERE id=?').get('host')!.password_hash,
+      'original-verifier',
+    );
+    assert.equal(migrated.session(session.raw)!.principal_id, 'host');
+    assert.doesNotThrow(() => migrated.assertOwner(exam.id, 'host'));
+    assert.throws(() => migrated.assertOwner(exam.id, 'another-admin'), /not found/);
+    assert.equal(db.prepare('SELECT admin_id FROM assessment_creations').get()!.admin_id, 'host');
+    assert.equal(db.prepare('PRAGMA foreign_key_check').all().length, 0);
+    assert.ok(existsSync(`${path}.before-v13`));
+    db.prepare('INSERT INTO administrators VALUES(?,?,?,NULL)').run(
+      'cloud',
+      'Cloud',
+      'supabase-managed',
+    );
+    assert.throws(() =>
+      db.prepare('INSERT INTO administrators VALUES(?,?,?,1)').run('second-host', 'Other', 'test'),
+    );
+  } finally {
+    db.close();
+    for (const name of readdirSync(directory)) unlinkSync(join(directory, name));
+    rmdirSync(directory);
+  }
+});
+
 test('v1 migration backs up and preserves existing attempts, responses, credentials, and sessions', () => {
   const directory = mkdtempSync(join(tmpdir(), 'mudu-migration-'));
   const path = join(directory, 'exam.sqlite');
@@ -39,7 +94,7 @@ test('v1 migration backs up and preserves existing attempts, responses, credenti
     });
     // Reconstruct the previous schema in this isolated fixture, retaining all
     // pre-existing exam rows. No real workspace database is touched by this test.
-    db.exec(`DROP TABLE bank_revisions; DROP TABLE bank_questions; DROP TABLE bank_generations;
+    db.exec(`DROP TABLE workspace_connections; DROP TABLE account_preferences; DROP TABLE admin_device_sessions; DROP TABLE admin_device_access; DROP TABLE password_recovery; DROP TABLE offline_candidate_sessions; DROP TABLE local_admission; DROP TABLE local_preparations; DROP TABLE authoring_drafts; DROP TABLE candidate_provider_identities; DROP TABLE cloud_sync_jobs; DROP TABLE cloud_instance; DROP TABLE provider_sessions; DROP TABLE admin_provider_identities; DROP TABLE assessment_owners; DROP TABLE exam_control_receipts; DROP TABLE announcement_reads; DROP TABLE exam_announcements; DROP TABLE exam_controls; DROP TABLE candidate_presence; DROP TABLE bank_deleted_questions; DROP TABLE bank_question_projects; DROP TABLE bank_projects; DROP TABLE bank_revisions; DROP TABLE bank_questions; DROP TABLE bank_generations;
       DROP TABLE roster_enrolment_invites; DROP TABLE application_numbers;
       DROP TABLE registrations; DROP TABLE registration_settings; DROP TABLE memberships;
       DROP INDEX sessions_account; ALTER TABLE sessions DROP COLUMN account_id;
@@ -48,7 +103,7 @@ test('v1 migration backs up and preserves existing attempts, responses, credenti
     db.close();
     db = openDatabase(path);
     store = new ExamStore(db, () => 1001000);
-    assert.equal(db.prepare('PRAGMA user_version').get()?.user_version, 8);
+    assert.equal(db.prepare('PRAGMA user_version').get()?.user_version, 20);
     assert.deepEqual(store.findAttempt(sitting.id, 'legacy-student'), attempt);
     assert.deepEqual(store.responses(attempt.id)[question.id].value, question.correctOptionIds);
     assert.equal(
@@ -141,12 +196,12 @@ test('v6 upgrade backs up data and assigns stable application references without
     identity.register(identity.settings(exam.id).token, accountId);
     const requestId = identity.requests(exam.id)[0].id;
     db.exec(
-      'DROP TABLE bank_revisions; DROP TABLE bank_questions; DROP TABLE bank_generations; DROP TRIGGER registration_application_number; DROP TABLE application_numbers; DROP TABLE roster_enrolment_invites; PRAGMA user_version=6;',
+      'DROP TABLE workspace_connections; DROP TABLE account_preferences; DROP TABLE admin_device_sessions; DROP TABLE admin_device_access; DROP TABLE password_recovery; DROP TABLE offline_candidate_sessions; DROP TABLE local_admission; DROP TABLE local_preparations; DROP TABLE authoring_drafts; DROP TABLE candidate_provider_identities; DROP TABLE cloud_sync_jobs; DROP TABLE cloud_instance; DROP TABLE provider_sessions; DROP TABLE admin_provider_identities; DROP TABLE assessment_owners; DROP TABLE exam_control_receipts; DROP TABLE announcement_reads; DROP TABLE exam_announcements; DROP TABLE exam_controls; DROP TABLE candidate_presence; DROP TABLE bank_deleted_questions; DROP TABLE bank_question_projects; DROP TABLE bank_projects; DROP TABLE bank_revisions; DROP TABLE bank_questions; DROP TABLE bank_generations; DROP TRIGGER registration_application_number; DROP TABLE application_numbers; DROP TABLE roster_enrolment_invites; PRAGMA user_version=6;',
     );
     db.close();
     db = openDatabase(path);
     const migrated = new IdentityService(new ExamStore(db));
-    assert.equal(db.prepare('PRAGMA user_version').get()?.user_version, 8);
+    assert.equal(db.prepare('PRAGMA user_version').get()?.user_version, 20);
     assert.equal(migrated.profile(accountId).identifier, '001');
     assert.equal(
       db.prepare('SELECT password_hash FROM accounts WHERE id=?').get(accountId)?.password_hash,

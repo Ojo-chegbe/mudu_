@@ -125,6 +125,23 @@ test('HTTP examination lifecycle, access boundaries, replay, grading, and export
         credential: input().candidates[0].credential,
       });
       assert.equal(login.response.status, 200);
+      assert.equal(
+        (await candidate.request(`/assessments/${assessmentId}/monitor`)).response.status,
+        403,
+      );
+      assert.equal(
+        (await candidate.request('/candidate/heartbeat', 'POST', {}, { 'X-CSRF-Token': 'wrong' }))
+          .response.status,
+        403,
+      );
+      assert.equal(
+        (await candidate.request('/candidate/heartbeat', 'POST', {})).response.status,
+        200,
+      );
+      const monitor = (await admin.request(`/assessments/${assessmentId}/monitor`)).value;
+      assert.equal(monitor.candidates[0].status, 'waiting');
+      assert.ok(monitor.candidates[0].lastSeenAt);
+      assert.doesNotMatch(JSON.stringify(monitor), /correctOptionIds|credential_hash|prompt/);
       assert.equal((await candidate.request('/assessments')).response.status, 403);
       assert.equal((await candidate.request('/candidate/state')).value.attempt, null);
       const start = await candidate.request('/candidate/start', 'POST', {});

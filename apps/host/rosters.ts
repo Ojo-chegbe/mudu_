@@ -6,6 +6,9 @@ import { token } from './security.ts';
 import { IdentityService, emailAddress } from './identity.ts';
 import type { ExamStore } from './store.ts';
 import type { RosterDetail, RosterSummary } from '../../packages/contracts/rosters.ts';
+import { syncLinkedRosters, syncRosterAssessment } from './roster-admission.ts';
+import { admissionWindow } from '../../packages/exam-core/timing.ts';
+import { execution } from './exam-controls.ts';
 
 export class Rosters {
   store: ExamStore;
@@ -121,18 +124,30 @@ export class Rosters {
       status: member ? String(member.status) : null,
     };
   }
-  join(link: string, account: string) {
+  join(link: string, account: string, claimedNumber?: unknown) {
     transaction(this.db, () => {
       const view = this.invitation(link, account);
       if (view.status) return;
       if (!view.accepting) throw new DomainError('This roster is closed to new requests.', 409);
       const r = this.db.prepare('SELECT id FROM rosters WHERE token=?').get(link)!;
       const profile = new IdentityService(this.store).profile(account);
+      const number = claimedNumber === undefined ? profile.identifier : identifier(claimedNumber);
+      if (
+        number !== profile.identifier &&
+        profile.identityStatus === 'verified' &&
+        profile.identifier.startsWith('ACCOUNT-')
+      )
+        throw new DomainError(
+          'Ask your organiser to assign your student number before joining this restricted group.',
+          409,
+        );
+      if (number !== profile.identifier && !profile.identifier.startsWith('ACCOUNT-'))
+        throw new DomainError('Use the candidate number already assigned to your account.', 409);
       if (
         view.restricted &&
         !this.db
           .prepare('SELECT 1 FROM roster_entries WHERE roster_id=? AND identifier=?')
-          .get(r.id!, profile.identifier)
+          .get(r.id!, number)
       )
         throw new DomainError(
           'Your candidate number is not on this roster. Contact the assessment organiser.',
@@ -144,6 +159,12 @@ export class Rosters {
         ) >= 2000
       )
         throw new DomainError('This roster’s request queue is full.', 409);
+      if (number !== profile.identifier)
+        this.db
+          .prepare(
+            "UPDATE memberships SET identifier=? WHERE account_id=? AND organization_id='default' AND status='pending'",
+          )
+          .run(number, account);
       this.db
         .prepare("INSERT INTO roster_members VALUES(?,?,'pending',?,NULL)")
         .run(r.id!, account, this.store.now());
@@ -159,6 +180,11 @@ export class Rosters {
       const member = roster.members.find((m) => m.accountId === account);
       if (!member) throw new DomainError('Membership request not found.', 404);
       const decision = input.decision;
+      if (input.revision !== undefined && input.revision !== roster.revision)
+        throw new DomainError(
+          'Membership changed. Refresh requests before reviewing this candidate.',
+          409,
+        );
       if (!['approved', 'rejected', 'removed'].includes(String(decision)))
         throw new DomainError('Invalid membership decision.');
       if (member.status === decision) return;
@@ -210,6 +236,7 @@ export class Rosters {
         accountId: account,
         decision,
       });
+      if (decision === 'approved') syncLinkedRosters(this.store, owner, id);
     });
     return this.get(id, owner);
   }
@@ -280,6 +307,7 @@ export class Rosters {
       .prepare('UPDATE rosters SET revision=revision+1,updated_at=? WHERE id=?')
       .run(this.store.now(), id);
     this.store.event(null, actor, 'candidate_enrolled', { rosterId: id, accountId });
+    syncLinkedRosters(this.store, actor, id);
   }
   enrol(id: string, owner: string, input: Record<string, unknown>) {
     transaction(this.db, () => {
@@ -405,6 +433,16 @@ export class Rosters {
         throw new DomainError('Sign in with the email address the organiser invited.', 403);
       if (row.claimed_account_id && row.claimed_account_id !== accountId)
         throw new DomainError('This invitation has already been used.', 409);
+      if (
+        row.claimed_account_id &&
+        this.db
+          .prepare('SELECT status FROM roster_members WHERE roster_id=? AND account_id=?')
+          .get(row.roster_id!, accountId)?.status !== 'approved'
+      )
+        throw new DomainError(
+          'This invitation was already accepted. Contact the organiser about your current membership.',
+          409,
+        );
       if (!row.claimed_account_id) {
         if (!invitation.accepting)
           throw new DomainError('Joining is closed. Contact the organiser.', 409);
@@ -435,11 +473,35 @@ export class Rosters {
     };
   }
   additions(assessmentId: string, owner: string, apply = false, revision?: unknown) {
+    this.store.assertOwner(assessmentId, owner);
     const link = this.db
       .prepare('SELECT * FROM assessment_rosters WHERE assessment_id=?')
       .get(assessmentId);
     if (!link) throw new DomainError('No roster is attached.', 404);
     const roster = this.get(String(link.roster_id), owner);
+    const definition = this.store.assessment(assessmentId);
+    const sitting = this.db
+      .prepare('SELECT id,started_at,deadline,snapshot FROM sittings WHERE assessment_id=?')
+      .get(assessmentId);
+    const control = sitting
+      ? execution(this.db, this.store.sitting(String(sitting.id)), this.store.now())
+      : null;
+    const window = sitting
+      ? admissionWindow(
+          control!.assessment,
+          Number(sitting.started_at),
+          control!.admissionDeadline,
+          control!.now,
+        )
+      : null;
+    const completed = Boolean(sitting && Number(sitting.deadline) <= control!.now);
+    const canAdmit =
+      !roster.archived &&
+      !completed &&
+      control?.pausedAt == null &&
+      (!window ||
+        window.startRestriction === 'not_open' ||
+        (window.canStart && definition.allowLateAdmission === true));
     const started = Boolean(
       this.db.prepare('SELECT id FROM sittings WHERE assessment_id=?').get(assessmentId),
     );
@@ -458,39 +520,12 @@ export class Rosters {
             'Roster membership changed. Refresh and review the new members again.',
             409,
           );
-        if (started || roster.archived)
+        if (!canAdmit)
           throw new DomainError(
-            'Candidates can only be added from an active roster before the examination starts.',
+            'Admission is closed. Enable late admission while the start window is open, or add candidates before the examination starts.',
             409,
           );
-        const count = Number(
-          this.db
-            .prepare('SELECT COUNT(*) n FROM registrations WHERE assessment_id=?')
-            .get(assessmentId)?.n,
-        );
-        if (count + additions.length > 500)
-          throw new DomainError('This assessment supports at most 500 candidates.', 409);
-        for (const m of additions) {
-          const candidateId = randomUUID();
-          this.db
-            .prepare('INSERT INTO candidates VALUES(?,?,?,?,?)')
-            .run(candidateId, assessmentId, m.identifier, m.name, 'account-managed');
-          this.db
-            .prepare("INSERT INTO registrations VALUES(?,?,?,?,'approved',?,?)")
-            .run(
-              randomUUID(),
-              assessmentId,
-              m.accountId,
-              candidateId,
-              this.store.now(),
-              this.store.now(),
-            );
-        }
-        this.store.event(null, owner, 'roster_members_added_to_assessment', {
-          assessmentId,
-          rosterId: roster.id,
-          count: additions.length,
-        });
+        syncRosterAssessment(this.store, assessmentId, owner);
       });
     return {
       name: String(link.name),
@@ -498,6 +533,16 @@ export class Rosters {
       revision: Number(link.revision),
       currentRevision: roster.revision,
       started,
+      completed,
+      canAdmit,
+      allowLateAdmission: definition.allowLateAdmission ?? false,
+      admittedCount: Number(
+        this.db
+          .prepare(
+            "SELECT COUNT(*) n FROM registrations WHERE assessment_id=? AND status='approved'",
+          )
+          .get(assessmentId)?.n,
+      ),
       additions: apply ? [] : additions,
     };
   }

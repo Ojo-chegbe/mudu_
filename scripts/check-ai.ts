@@ -4,9 +4,16 @@ import { openDatabase } from '../apps/host/database.ts';
 import { ExamStore } from '../apps/host/store.ts';
 import { QuestionGeneration, googleGenerate } from '../apps/host/question-generation.ts';
 import { DomainError } from '../packages/exam-core/model.ts';
+import { QuestionBank } from '../apps/host/question-bank.ts';
 
 const db = openDatabase(':memory:');
 try {
+  const project = new QuestionBank(new ExamStore(db)).saveProject('smoke-test', {
+    id: randomUUID(),
+    name: 'Synthetic smoke test',
+    archived: false,
+    expectedRevision: 0,
+  });
   const ai = new QuestionGeneration(new ExamStore(db), async (key, prompt) => {
     const output = await googleGenerate(key, prompt);
     // Explicit diagnostics contain only output from the synthetic source below.
@@ -14,6 +21,7 @@ try {
     return output;
   });
   const result = await ai.generate('smoke-test', {
+    projectId: project.id,
     requestId: randomUUID(),
     consent: true,
     count: 2,

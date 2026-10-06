@@ -17,8 +17,14 @@ import { DomainError } from '../packages/exam-core/model.ts';
 import { parseAssessment } from '../packages/exam-core/engine.ts';
 import { emptyBankContent } from '../packages/contracts/question-bank.ts';
 
-const content = () => ({
+const projectIds = new Map<string, string>();
+function projectId(owner = 'admin') {
+  if (!projectIds.has(owner)) projectIds.set(owner, randomUUID());
+  return projectIds.get(owner)!;
+}
+const content = (owner = 'admin') => ({
   ...emptyBankContent(),
+  projectId: projectId(owner),
   course: 'Biology',
   topic: 'Cells',
   tags: ['revision'],
@@ -42,7 +48,8 @@ const generated = () =>
       },
     ],
   });
-const request = () => ({
+const request = (owner = 'admin') => ({
+  projectId: projectId(owner),
   requestId: randomUUID(),
   source,
   course: 'Biology',
@@ -55,7 +62,17 @@ const request = () => ({
 function fixture() {
   const db = openDatabase(':memory:');
   const store = new ExamStore(db);
-  return { db, store, bank: new QuestionBank(store) };
+  const bank = new QuestionBank(store);
+  for (const owner of ['admin', 'other', 'new-user', 'one', 'two', 'three', 'four'])
+    bank.saveProject(owner, {
+      id: projectId(owner),
+      name: 'Biology questions',
+      course: 'Biology',
+      description: '',
+      archived: false,
+      expectedRevision: 0,
+    });
+  return { db, store, bank };
 }
 
 test('question drafts require explicit approval, validate answer keys and retain revision history', (t) => {
@@ -160,16 +177,29 @@ test('bank search, pagination and status counts are owner scoped', (t) => {
       status: i === 31 ? 'draft' : 'approved',
       expectedRevision: 0,
     });
-  bank.save('other', { ...content(), id: randomUUID(), status: 'approved', expectedRevision: 0 });
+  bank.save('other', {
+    ...content('other'),
+    id: randomUUID(),
+    status: 'approved',
+    expectedRevision: 0,
+  });
   const page = bank.list(
     'admin',
-    new URLSearchParams('status=approved&q=revision&type=single&difficulty=medium'),
+    new URLSearchParams(
+      `projectId=${projectId()}&status=approved&q=revision&type=single&difficulty=medium`,
+    ),
   );
   assert.equal(page.total, 31);
   assert.equal(page.items.length, 30);
   assert.deepEqual(page.counts, { draft: 1, approved: 31, archived: 0 });
-  assert.equal(bank.list('admin', new URLSearchParams('offset=30')).items.length, 1);
-  assert.equal(bank.list('admin', new URLSearchParams('q=notpresent')).total, 0);
+  assert.equal(
+    bank.list('admin', new URLSearchParams(`projectId=${projectId()}&offset=30`)).items.length,
+    1,
+  );
+  assert.equal(
+    bank.list('admin', new URLSearchParams(`projectId=${projectId()}&q=notpresent`)).total,
+    0,
+  );
 });
 
 test('generation is consent gated, idempotent, draft only, and stores no complete source notes or key', async (t) => {
@@ -430,7 +460,7 @@ test('shared historical usage no longer limits generation, including after resta
     'server-key',
   );
   assert.equal(ai.availability().available, true);
-  assert.equal((await ai.generate('new-user', request())).status, 'completed');
+  assert.equal((await ai.generate('new-user', request('new-user'))).status, 'completed');
   assert.equal(calls, 1);
   const restarted = new QuestionGeneration(store, async () => generated(), 'server-key');
   assert.equal(restarted.availability().available, true);
@@ -447,13 +477,13 @@ test('concurrent generation is not capped while retries still avoid duplicate jo
     () => new Promise((resolve) => releases.push(resolve)),
     'server-key',
   );
-  const first = request();
+  const first = request('one');
   const jobs = [
     ai.generate('one', first),
-    ai.generate('two', request()),
-    ai.generate('three', request()),
-    ai.generate('four', request()),
-    ai.generate('one', request()),
+    ai.generate('two', request('two')),
+    ai.generate('three', request('three')),
+    ai.generate('four', request('four')),
+    ai.generate('one', request('one')),
   ];
   assert.equal((await ai.generate('one', first)).status, 'running');
   assert.equal(db.prepare('SELECT COUNT(*) n FROM bank_generations').get()?.n, 5);
@@ -511,7 +541,12 @@ test('question bank HTTP routes protect keys and answer content with admin auth 
   });
   const admin = store.createSession('admin', 'admin', null);
   const candidate = store.createSession('candidate', 'candidate', null);
-  for (const path of ['/question-bank', '/question-bank/ai/status']) {
+  for (const path of [
+    '/question-bank',
+    '/question-bank/ai/status',
+    '/question-bank/projects',
+    `/question-bank/projects/${projectId()}`,
+  ]) {
     assert.equal((await fetch(origin + '/api' + path)).status, 401);
     assert.equal(
       (
@@ -543,6 +578,38 @@ test('question bank HTTP routes protect keys and answer content with admin auth 
   const status = await fetch(origin + '/api/question-bank/ai/status', { headers });
   assert.equal(status.status, 200);
   assert.deepEqual(Object.keys(await status.json()).sort(), ['available', 'message', 'retryAt']);
+  const projectInput = {
+    id: randomUUID(),
+    name: 'HTTP project',
+    course: 'Biology',
+    archived: false,
+    expectedRevision: 0,
+  };
+  assert.equal(
+    (
+      await fetch(origin + '/api/question-bank/projects', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(projectInput),
+      })
+    ).status,
+    403,
+  );
+  const projectResponse = await fetch(origin + '/api/question-bank/projects', {
+    method: 'POST',
+    headers: { ...headers, 'X-CSRF-Token': admin.csrf },
+    body: JSON.stringify(projectInput),
+  });
+  assert.equal(projectResponse.status, 200);
+  const stranger = store.createSession('admin', 'stranger', null);
+  assert.equal(
+    (
+      await fetch(`${origin}/api/question-bank/projects/${projectInput.id}`, {
+        headers: { Cookie: `mudu_session=${stranger.raw}` },
+      })
+    ).status,
+    404,
+  );
   const input = { ...content(), id: randomUUID(), expectedRevision: 0, status: 'approved' };
   const saved = await fetch(origin + '/api/question-bank', {
     method: 'POST',
@@ -550,6 +617,55 @@ test('question bank HTTP routes protect keys and answer content with admin auth 
     body: JSON.stringify(input),
   });
   assert.equal(saved.status, 200);
+  const moveBody = JSON.stringify({
+    projectId: projectInput.id,
+    selection: [{ id: input.id, revision: 1 }],
+  });
+  assert.equal(
+    (await fetch(origin + '/api/question-bank/move', { method: 'POST', headers, body: moveBody }))
+      .status,
+    403,
+  );
+  assert.equal(
+    (
+      await fetch(origin + '/api/question-bank/move', {
+        method: 'POST',
+        headers: { ...headers, 'X-CSRF-Token': admin.csrf },
+        body: moveBody,
+      })
+    ).status,
+    200,
+  );
+  const scoped = await fetch(`${origin}/api/question-bank?projectId=${projectInput.id}`, {
+    headers,
+  });
+  assert.equal(scoped.status, 200);
+  assert.equal((await scoped.json()).items[0].projectId, projectInput.id);
+  const reviewBody = JSON.stringify({
+    action: 'delete',
+    selection: [{ id: input.id, revision: 2 }],
+  });
+  assert.equal(
+    (
+      await fetch(origin + '/api/question-bank/review', {
+        method: 'POST',
+        headers,
+        body: reviewBody,
+      })
+    ).status,
+    403,
+  );
+  assert.equal(
+    (
+      await fetch(origin + '/api/question-bank/review', {
+        method: 'POST',
+        headers: { ...headers, 'X-CSRF-Token': admin.csrf },
+        body: reviewBody,
+      })
+    ).status,
+    200,
+  );
+  assert.equal((await fetch(`${origin}/api/question-bank/${input.id}`, { headers })).status, 404);
   assert.equal(
     (
       await fetch(`${origin}/api/question-bank/${input.id}`, {
@@ -571,11 +687,11 @@ test('v7 migration preserves existing data and bank records survive reopening', 
       'unchanged',
     );
     db.exec(
-      'DROP TABLE bank_revisions; DROP TABLE bank_questions; DROP TABLE bank_generations; PRAGMA user_version=7;',
+      'DROP TABLE workspace_connections; DROP TABLE account_preferences; DROP TABLE admin_device_sessions; DROP TABLE admin_device_access; DROP TABLE password_recovery; DROP TABLE offline_candidate_sessions; DROP TABLE local_admission; DROP TABLE local_preparations; DROP TABLE authoring_drafts; DROP TABLE candidate_provider_identities; DROP TABLE cloud_sync_jobs; DROP TABLE cloud_instance; DROP TABLE provider_sessions; DROP TABLE admin_provider_identities; DROP TABLE assessment_owners; DROP TABLE exam_control_receipts; DROP TABLE announcement_reads; DROP TABLE exam_announcements; DROP TABLE exam_controls; DROP TABLE candidate_presence; DROP TABLE bank_deleted_questions; DROP TABLE bank_question_projects; DROP TABLE bank_projects; DROP TABLE bank_revisions; DROP TABLE bank_questions; DROP TABLE bank_generations; PRAGMA user_version=7;',
     );
     db.close();
     db = openDatabase(path);
-    assert.equal(db.prepare('PRAGMA user_version').get()?.user_version, 8);
+    assert.equal(db.prepare('PRAGMA user_version').get()?.user_version, 20);
     assert.equal(
       db.prepare('SELECT password_hash FROM administrators').get()?.password_hash,
       'unchanged',
@@ -584,6 +700,12 @@ test('v7 migration preserves existing data and bank records survive reopening', 
     assert.equal(old.prepare('PRAGMA user_version').get()?.user_version, 7);
     old.close();
     const bank = new QuestionBank(new ExamStore(db));
+    bank.saveProject('admin', {
+      id: projectId(),
+      name: 'Biology questions',
+      archived: false,
+      expectedRevision: 0,
+    });
     const item = bank.save('admin', {
       ...content(),
       id: randomUUID(),

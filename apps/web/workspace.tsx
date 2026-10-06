@@ -7,8 +7,14 @@ import { Badge, Dialog, Icon, Loading, Notice, formatTime } from './ui.tsx';
 import { RegistrationAdmin } from './registration-admin.tsx';
 import { ManualReview } from './manual-review.tsx';
 import { AssessmentRoster } from './rosters.tsx';
+import { ExamMonitor } from './monitoring.tsx';
+import { AdmissionControl } from './admission-control.tsx';
+import { TimingSummary } from './timing-fields.tsx';
+import { AuthoringSaveStatus, ContinueDrafting } from './authoring.tsx';
+import { PrepareLocalAssessment } from './local-preparation.tsx';
+import { OnlineDelivery } from './online-delivery.tsx';
 
-export function Dashboard({ name }: { name: string }) {
+export function Dashboard({ name, online = false }: { name: string; online?: boolean }) {
   const [items, setItems] = useState<Summary[] | null>(null);
   const [error, setError] = useState('');
   const [filter, setFilter] = useState('all');
@@ -18,6 +24,15 @@ export function Dashboard({ name }: { name: string }) {
     async function load() {
       try {
         const data = await api<{ assessments: Summary[] }>('/assessments');
+        if (alive) setItems(data.assessments);
+        if (online) {
+          const cloud = await api<{ examinations: Summary[] }>('/online/assessments');
+          const ids = new Set(cloud.examinations.map((exam) => exam.id));
+          data.assessments = [
+            ...data.assessments.filter((exam) => !ids.has(exam.id)),
+            ...cloud.examinations,
+          ];
+        }
         if (alive) {
           setItems(data.assessments);
           setError('');
@@ -32,7 +47,7 @@ export function Dashboard({ name }: { name: string }) {
       alive = false;
       clearInterval(timer);
     };
-  }, []);
+  }, [online]);
   const visible =
     items?.filter(
       (item) =>
@@ -53,6 +68,8 @@ export function Dashboard({ name }: { name: string }) {
         </a>
       </div>
       {error && <Notice>{error}</Notice>}
+      <AuthoringSaveStatus />
+      <ContinueDrafting />
       {!items ? (
         <Loading />
       ) : (
@@ -132,7 +149,7 @@ export function Dashboard({ name }: { name: string }) {
                         <td>
                           <a
                             className="assessment-name"
-                            href={`/assessments/${item.id}${item.status === 'completed' ? '?tab=results' : ''}`}
+                            href={`/${item.delivery === 'online' ? 'online/' : ''}assessments/${item.id}${item.status === 'completed' ? '?tab=results' : ''}`}
                           >
                             <span className="paper-icon">
                               <Icon name="paper" />
@@ -156,7 +173,7 @@ export function Dashboard({ name }: { name: string }) {
                               item.status === 'completed' ? 'button secondary' : 'icon-button'
                             }
                             aria-label={`${item.status === 'completed' ? 'View results for' : 'Open'} ${item.title}`}
-                            href={`/assessments/${item.id}${item.status === 'completed' ? '?tab=results' : ''}`}
+                            href={`/${item.delivery === 'online' ? 'online/' : ''}assessments/${item.id}${item.status === 'completed' ? '?tab=results' : ''}`}
                           >
                             {item.status === 'completed' && 'View results'}
                             <Icon name="arrow" size={18} />
@@ -195,9 +212,9 @@ export function Dashboard({ name }: { name: string }) {
           <footer className="workspace-footer">
             <span>
               <Icon name="shield" size={15} />
-              Your local workspace. Your assessment records.
+              Your workspace. Your assessment records.
             </span>
-            <span>MUDU · Development foundation</span>
+            <span>MUDU</span>
           </footer>
         </>
       )}
@@ -213,16 +230,21 @@ export function Detail({ id }: { id: string }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState<'launch' | 'end' | null>(null);
-  const requestedTab = new URLSearchParams(location.search).get('tab');
-  const tab = ['results', 'questions', 'activity'].includes(requestedTab ?? '')
-    ? requestedTab
-    : 'overview';
+  const [tab, setTab] = useState<string | null>(() => {
+    const requested = new URLSearchParams(location.search).get('tab');
+    return ['overview', 'monitor', 'results', 'questions', 'activity'].includes(requested ?? '')
+      ? requested
+      : null;
+  });
   const [remaining, setRemaining] = useState(0);
   const [copied, setCopied] = useState(false);
   async function load() {
     try {
       const result = await api<AssessmentDetail>(`/assessments/${id}`);
       setData(result);
+      setTab(
+        (previous) => previous ?? (result.summary.status === 'active' ? 'monitor' : 'overview'),
+      );
       setError('');
     } catch (error) {
       setError(errorMessage(error));
@@ -235,9 +257,11 @@ export function Detail({ id }: { id: string }) {
   }, [id]);
   useEffect(() => {
     if (!data?.summary.sitting) return;
-    const initial = data.summary.sitting.deadline - data.serverNow;
+    const initial =
+      data.summary.sitting.deadline - (data.summary.sitting.pausedAt ?? data.serverNow);
     const at = performance.now();
     setRemaining(initial);
+    if (data.summary.sitting.pausedAt != null) return;
     const timer = setInterval(
       () => setRemaining(Math.max(0, initial - (performance.now() - at))),
       1000,
@@ -250,6 +274,12 @@ export function Detail({ id }: { id: string }) {
     setError('');
     try {
       await api(`/assessments/${id}/${confirm}`, { method: 'POST', body: {} });
+      if (confirm === 'launch') {
+        setTab('monitor');
+        const url = new URL(location.href);
+        url.searchParams.set('tab', 'monitor');
+        history.replaceState(null, '', url.pathname + url.search);
+      }
       setConfirm(null);
       await load();
     } catch (error) {
@@ -261,6 +291,8 @@ export function Detail({ id }: { id: string }) {
   }
   if (!data) return error ? <Notice>{error}</Notice> : <Loading />;
   const { assessment, summary, candidates } = data;
+  const online = data.delivery === 'online';
+  const detailPath = `/${online ? 'online/' : ''}assessments/${id}`;
   const completed = candidates.filter((c) => c.grade).length;
   return (
     <>
@@ -277,18 +309,31 @@ export function Detail({ id }: { id: string }) {
           <h1>{assessment.title}</h1>
           <p className="muted">
             {summary.questionCount} questions <span className="dot-separator">·</span>{' '}
-            {summary.candidateCount} candidates <span className="dot-separator">·</span> Local
-            delivery
+            {summary.candidateCount} candidates <span className="dot-separator">·</span>{' '}
+            {online ? 'Online delivery' : 'Local delivery'}
           </p>
         </div>
         <div className="actions">
+          {summary.status === 'completed' && (
+            <button className="button secondary" onClick={() => setRerun(true)}>
+              Run again
+            </button>
+          )}
           {summary.status === 'draft' ? (
             <>
-              <a className="button secondary" href={`/assessments/${id}/edit`}>
-                Edit assessment
-              </a>
-              <button className="button primary" onClick={() => setConfirm('launch')}>
-                Start examination
+              {!data.preparedLocalRun && (
+                <a className="button secondary" href={`/assessments/${id}/edit`}>
+                  Edit assessment
+                </a>
+              )}
+              <button
+                className="button primary"
+                disabled={data.deliveryReady === false}
+                onClick={() => setConfirm('launch')}
+              >
+                {assessment.timing?.mode === 'individual'
+                  ? 'Publish assessment'
+                  : 'Start examination'}
                 <Icon name="arrow" size={17} />
               </button>
             </>
@@ -304,23 +349,26 @@ export function Detail({ id }: { id: string }) {
         </div>
       </div>
       {error && <Notice>{error}</Notice>}
-      {summary.status === 'completed' && (
-        <section className="panel padded rerun-panel">
-          <div>
-            <h2>Ready for another run?</h2>
-            <p className="muted small">
-              Reuse this paper without changing the completed examination or its results.
-            </p>
-          </div>
-          <button className="button secondary" onClick={() => setRerun(true)}>
-            Run again
-          </button>
-        </section>
+      {summary.status === 'draft' && !data.preparedLocalRun && (
+        <AuthoringSaveStatus id={id} onResolved={() => location.reload()} />
+      )}
+      {!online && tab === 'overview' && (
+        <div className="assessment-delivery" aria-label="Examination delivery">
+          <OnlineDelivery id={id} />
+          <PrepareLocalAssessment key={id} id={id} />
+        </div>
+      )}
+      {online && (
+        <p className="field-hint">
+          <a href={`/assessments/${id}`}>Open source assessment</a> to edit or prepare another
+          delivery. This examination keeps its published question paper.
+        </p>
       )}
       {data.source && (
         <p className="field-hint">
-          New run of <a href={`/assessments/${data.source.id}`}>{data.source.title}</a>. Previous
-          results are kept separately.
+          {data.preparedLocalRun ? 'Prepared local run of' : 'New run of'}{' '}
+          <a href={`/assessments/${data.source.id}`}>{data.source.title}</a>. Results are kept
+          separately.
         </p>
       )}
       {new URLSearchParams(location.search).get('updated') === '1' && (
@@ -337,23 +385,35 @@ export function Detail({ id }: { id: string }) {
         />
       )}
       <nav className="tabs" aria-label="Assessment sections">
-        {(['overview', 'results', 'questions', 'activity'] as const).map((value) => (
+        {(['overview', 'monitor', 'results', 'questions', 'activity'] as const).map((value) => (
           <a
             className={`tab ${tab === value ? 'current' : ''}`}
             key={value}
-            href={`/assessments/${id}?tab=${value}`}
+            href={`${detailPath}?tab=${value}`}
             aria-current={tab === value ? 'page' : undefined}
           >
             {value.charAt(0).toUpperCase() + value.slice(1)}
           </a>
         ))}
       </nav>
+      {(data.roster || data.lateRosterAvailable) &&
+        (tab === 'overview' || tab === 'monitor') &&
+        summary.status !== 'draft' && (
+          <AdmissionControl
+            id={id}
+            enabled={summary.allowLateAdmission ?? false}
+            completed={summary.status === 'completed'}
+            onChange={load}
+          />
+        )}
+      {tab === 'monitor' && <ExamMonitor key={id} id={id} />}
       {tab === 'overview' && (
         <>
           {data.roster && <AssessmentRoster id={id} onChange={load} />}
-          {summary.accessMode === 'accounts' && !data.roster && (
-            <RegistrationAdmin assessmentId={id} onChange={load} />
-          )}
+          {!online &&
+            summary.accessMode === 'accounts' &&
+            !data.roster &&
+            !data.preparedLocalRun && <RegistrationAdmin assessmentId={id} onChange={load} />}
           {summary.sitting && summary.accessMode === 'legacy' && (
             <section className="join-strip">
               <div>
@@ -396,7 +456,15 @@ export function Detail({ id }: { id: string }) {
           <section className="stats">
             <div className="stat">
               <div>
-                <span>{summary.status === 'active' ? 'Time remaining' : 'Duration'}</span>
+                <span>
+                  {summary.status === 'active'
+                    ? summary.sitting?.pausedAt != null
+                      ? 'Paused · time remaining'
+                      : assessment.timing?.mode === 'individual'
+                        ? 'Window remaining'
+                        : 'Time remaining'
+                    : 'Duration'}
+                </span>
                 <Icon name="clock" size={17} />
               </div>
               <strong className="tabular">
@@ -433,10 +501,14 @@ export function Detail({ id }: { id: string }) {
               </strong>
             </div>
           </section>
+          <dl className="summary-list panel padded">
+            <TimingSummary timing={assessment.timing} duration={assessment.durationMinutes} />
+          </dl>
           <div className="section-heading">
-            <h2>Candidate progress</h2>
-            <a className="text-button" href={`/assessments/${id}?tab=results`}>
-              View results <Icon name="arrow" size={16} />
+            <h2>Candidates</h2>
+            <a className="button secondary" href={`${detailPath}?tab=monitor`}>
+              {summary.status === 'active' ? 'Open live monitoring' : 'View candidate status'}{' '}
+              <Icon name="arrow" size={16} />
             </a>
           </div>
         </>
@@ -451,7 +523,7 @@ export function Detail({ id }: { id: string }) {
               </p>
             </div>
             {completed > 0 && (
-              <a className="button primary" href={`/api/assessments/${id}/results.csv`}>
+              <a className="button primary" href={`/api${detailPath}/results.csv`}>
                 <Icon name="download" size={17} />
                 Export results
               </a>
@@ -489,22 +561,16 @@ export function Detail({ id }: { id: string }) {
           onClose={() => setReviewCandidate(null)}
         />
       )}
-      {(tab === 'overview' || (tab === 'results' && completed > 0 && !reviewCandidate)) && (
+      {tab === 'results' && completed > 0 && !reviewCandidate && (
         <div className="table-wrap panel">
           <table>
             <thead>
               <tr>
                 <th>Candidate</th>
                 <th>Status</th>
-                {tab === 'overview' ? (
-                  <th>Answered</th>
-                ) : (
-                  <>
-                    <th>Score</th>
-                    <th>Result</th>
-                    <th>Review</th>
-                  </>
-                )}
+                <th>Score</th>
+                <th>Result</th>
+                <th>Review</th>
               </tr>
             </thead>
             <tbody>
@@ -517,39 +583,32 @@ export function Detail({ id }: { id: string }) {
                   <td>
                     <Badge status={candidate.status} />
                   </td>
-                  {tab === 'overview' ? (
+                  <>
                     <td>
-                      {candidate.answered} / {summary.questionCount}
+                      {candidate.grade
+                        ? `${candidate.grade.totalScore} / ${candidate.grade.maximumScore}${candidate.grade.pendingManual ? ' (provisional)' : ''}`
+                        : '—'}
                     </td>
-                  ) : (
-                    <>
-                      <td>
-                        {candidate.grade
-                          ? `${candidate.grade.totalScore} / ${candidate.grade.maximumScore}${candidate.grade.pendingManual ? ' (provisional)' : ''}`
-                          : '—'}
-                      </td>
-                      <td>
-                        {!candidate.grade ? (
-                          '—'
-                        ) : candidate.grade.pendingManual ? (
-                          <span className="muted">Needs manual review</span>
-                        ) : (
-                          <Badge status={candidate.grade.passed ? 'passed' : 'failed'} />
-                        )}
-                      </td>
-                      <td>
-                        {candidate.grade &&
-                          assessment.questions.some((q) => q.type === 'short') && (
-                            <button
-                              className="button secondary"
-                              onClick={() => setReviewCandidate(candidate.id)}
-                            >
-                              {candidate.grade.pendingManual ? 'Review answers' : 'View marks'}
-                            </button>
-                          )}
-                      </td>
-                    </>
-                  )}
+                    <td>
+                      {!candidate.grade ? (
+                        '—'
+                      ) : candidate.grade.pendingManual ? (
+                        <span className="muted">Needs manual review</span>
+                      ) : (
+                        <Badge status={candidate.grade.passed ? 'passed' : 'failed'} />
+                      )}
+                    </td>
+                    <td>
+                      {candidate.grade && assessment.questions.some((q) => q.type === 'short') && (
+                        <button
+                          className="button secondary"
+                          onClick={() => setReviewCandidate(candidate.id)}
+                        >
+                          {candidate.grade.pendingManual ? 'Review answers' : 'View marks'}
+                        </button>
+                      )}
+                    </td>
+                  </>
                 </tr>
               ))}
             </tbody>
@@ -597,7 +656,14 @@ export function Detail({ id }: { id: string }) {
           {data.events.length ? (
             data.events.map((event) => (
               <div className="event-row" key={event.id}>
-                <span>{event.kind.replaceAll('_', ' ')}</span>
+                <div>
+                  <span>
+                    {event.kind.replaceAll('_', ' ')}
+                    {event.candidateName ? ` · ${event.candidateName}` : ''}
+                    {event.minutes ? ` · +${event.minutes} minutes` : ''}
+                  </span>
+                  {event.reason && <p className="field-hint">{event.reason}</p>}
+                </div>
                 <time>{new Date(event.createdAt).toLocaleTimeString()}</time>
               </div>
             ))
@@ -609,7 +675,13 @@ export function Detail({ id }: { id: string }) {
       {confirm && (
         <Dialog
           title={confirm === 'launch' ? 'Ready to begin?' : 'End this examination?'}
-          confirmLabel={confirm === 'launch' ? 'Start examination' : 'End and submit saved answers'}
+          confirmLabel={
+            confirm === 'launch'
+              ? assessment.timing?.mode === 'individual'
+                ? 'Publish assessment'
+                : 'Start examination'
+              : 'End and submit saved answers'
+          }
           onClose={() => setConfirm(null)}
           confirm={execute}
           busy={busy}
@@ -618,12 +690,13 @@ export function Detail({ id }: { id: string }) {
           {confirm === 'launch' ? (
             <>
               <p>
-                The {assessment.durationMinutes}-minute clock starts for everyone immediately. Late
-                arrivals receive the remaining time.
+                {assessment.timing?.mode === 'individual'
+                  ? `Candidates may begin during the configured availability window. Each gets ${assessment.durationMinutes} minutes from clicking Begin examination, subject to any finish-by deadline.`
+                  : `The ${assessment.durationMinutes}-minute clock starts for everyone immediately. Late arrivals receive the remaining time.`}
               </p>
               <p>
-                Make sure your candidates have their access keys and are ready to connect. Questions
-                are fixed once the examination starts.
+                Make sure candidates have their sign-in details. Questions and timing settings are
+                fixed after publication; late admission can still be controlled separately.
               </p>
             </>
           ) : (

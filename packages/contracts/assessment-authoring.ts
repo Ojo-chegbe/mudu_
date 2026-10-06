@@ -1,4 +1,5 @@
-import type { Assessment, QuestionType } from '../exam-core/model.ts';
+import type { Assessment, QuestionType, TimingSettings } from '../exam-core/model.ts';
+import { sharedTiming } from '../exam-core/timing.ts';
 
 export interface AssessmentInput {
   title: string;
@@ -8,6 +9,8 @@ export interface AssessmentInput {
   passPercent: number;
   shuffleQuestions: boolean;
   shuffleOptions: boolean;
+  timing?: TimingSettings;
+  allowLateAdmission?: boolean;
   questions: Array<{
     type: QuestionType;
     prompt: string;
@@ -25,6 +28,8 @@ export function assessmentInput(assessment: Assessment): AssessmentInput {
     passPercent: assessment.passPercent,
     shuffleQuestions: assessment.shuffleQuestions,
     shuffleOptions: assessment.shuffleOptions,
+    timing: assessment.timing ?? sharedTiming(),
+    allowLateAdmission: assessment.allowLateAdmission ?? false,
     questions: assessment.questions.map((q) => ({
       type: q.type,
       prompt: q.prompt,

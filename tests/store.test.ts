@@ -49,7 +49,7 @@ test('manual marking validates marks, rejects stale edits, updates totals and re
   const sitting = store.launch(exam.id, 'admin');
   store.start(sitting.id, 'writer');
   const mark = { questionId: 'essay', score: 4, expectedRevision: 0 };
-  assert.throws(() => store.mark(exam.id, 'writer', mark, 'reviewer'), /completed/);
+  assert.throws(() => store.mark(exam.id, 'writer', mark, 'admin'), /completed/);
   store.save(sitting.id, 'writer', 'essay', {
     value: 'My reasoning',
     expectedRevision: 0,
@@ -59,27 +59,28 @@ test('manual marking validates marks, rejects stale edits, updates totals and re
   assert.equal(store.detail(exam.id).candidates[0].grade?.pendingManual, 1);
   assert.equal(store.review(exam.id, 'writer').questions[0].answer, 'My reasoning');
   for (const score of [-1, 6, NaN, Infinity, '4'])
-    assert.throws(() => store.mark(exam.id, 'writer', { ...mark, score }, 'reviewer'));
+    assert.throws(() => store.mark(exam.id, 'writer', { ...mark, score }, 'admin'));
   assert.throws(() =>
-    store.mark(exam.id, 'writer', { ...mark, questionId: exam.questions[0].id }, 'reviewer'),
+    store.mark(exam.id, 'writer', { ...mark, questionId: exam.questions[0].id }, 'admin'),
   );
   assert.throws(() => store.review('wrong-assessment', 'writer'));
-  store.mark(exam.id, 'writer', mark, 'reviewer');
-  assert.throws(() => store.mark(exam.id, 'writer', mark, 'other-reviewer'), /changed/);
+  assert.throws(() => store.mark(exam.id, 'writer', mark, 'other-reviewer'), /not found/);
+  store.mark(exam.id, 'writer', mark, 'admin');
+  assert.throws(() => store.mark(exam.id, 'writer', mark, 'admin'), /changed/);
   const result = new ExamStore(db).detail(exam.id).candidates[0].grade!;
   assert.equal(result.manualScore, 4);
   assert.equal(result.totalScore, 4);
   assert.equal(result.pendingManual, 0);
   assert.equal(result.percentage, 40);
   assert.equal(result.passed, false);
-  store.mark(exam.id, 'writer', { ...mark, score: 5, expectedRevision: 1 }, 'reviewer');
+  store.mark(exam.id, 'writer', { ...mark, score: 5, expectedRevision: 1 }, 'admin');
   assert.equal(store.detail(exam.id).candidates[0].grade?.passed, true);
-  store.mark(exam.id, 'writer', { ...mark, score: 0, expectedRevision: 2 }, 'reviewer');
+  store.mark(exam.id, 'writer', { ...mark, score: 0, expectedRevision: 2 }, 'admin');
   assert.equal(store.detail(exam.id).candidates[0].grade?.pendingManual, 0);
   assert.equal(
     db
       .prepare(
-        "SELECT COUNT(*) AS n FROM events WHERE kind='manual_grade_saved' AND actor_id='reviewer'",
+        "SELECT COUNT(*) AS n FROM events WHERE kind='manual_grade_saved' AND actor_id='admin'",
       )
       .get()?.n,
     3,

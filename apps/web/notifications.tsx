@@ -3,7 +3,7 @@ import type { NotificationFeed } from '../../packages/contracts/notifications.ts
 import { api, errorMessage } from './api.ts';
 import { Icon, Notice } from './ui.tsx';
 
-export function Notifications() {
+export function Notifications({ showBadge = true }: { showBadge?: boolean }) {
   const [feed, setFeed] = useState<NotificationFeed | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -81,7 +81,7 @@ export function Notifications() {
         >
           <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" />
         </svg>
-        {unread > 0 && (
+        {unread > 0 && showBadge && (
           <span className="notification-count" aria-hidden="true">
             {unread > 99 ? '99+' : unread}
           </span>

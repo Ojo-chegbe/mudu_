@@ -1,16 +1,31 @@
 import { useEffect, useRef, useState } from 'react';
 import { questionTypes } from '../../packages/contracts/question-bank.ts';
+import type { BankProject, BankQuestion } from '../../packages/contracts/question-bank.ts';
 import { api, errorMessage } from './api.ts';
 import { browserId } from './browser-id.ts';
-import { Icon, Notice } from './ui.tsx';
+import { Icon, Loading, Notice } from './ui.tsx';
+import { authorHref, projectHref } from './bank-projects.tsx';
 import { DocumentSource } from './document-source.tsx';
 import type { SourceDocument } from './document-source.tsx';
 import { maxGenerationCharacters } from '../../packages/contracts/documents.ts';
 import { GeneratedQuestionsReview } from './generated-review.tsx';
 
-const storageKey = 'mudu.bank-generation';
 type Job = { id: string; status: string; questionIds: string[]; error: string };
-export function BankGenerate() {
+export function BankGenerate({
+  projectId: suppliedProject,
+  embedded = false,
+  remaining = 200,
+  onAdd,
+}: {
+  projectId?: string;
+  embedded?: boolean;
+  remaining?: number;
+  onAdd?: (questions: BankQuestion[]) => void;
+} = {}) {
+  const projectId = suppliedProject ?? new URLSearchParams(location.search).get('project');
+  const storageKey = `mudu.bank-generation.${projectId}`;
+  const [project, setProject] = useState<BankProject | null>(null);
+  const [projectError, setProjectError] = useState('');
   const [draft, setDraft] = useState(() => {
     const empty = {
       source: '',
@@ -58,6 +73,27 @@ export function BankGenerate() {
   const [stored, setStored] = useState(true);
   const [job, setJob] = useState<Job | null>(null);
   const alive = useRef(true);
+  useEffect(() => {
+    let active = true;
+    if (!projectId) {
+      setProjectError('Open a project to generate questions.');
+      return;
+    }
+    void api<BankProject>(`/question-bank/projects/${projectId}`)
+      .then((value) => {
+        if (!active) return;
+        setProject(value);
+        setDraft((current) =>
+          !current.course && !current.started ? { ...current, course: value.course } : current,
+        );
+      })
+      .catch((e) => {
+        if (active) setProjectError(errorMessage(e));
+      });
+    return () => {
+      active = false;
+    };
+  }, [projectId]);
   async function refreshAvailability() {
     try {
       const status = await api<{ available: boolean; message: string; retryAt: number | null }>(
@@ -92,7 +128,7 @@ export function BankGenerate() {
     } catch {
       setStored(false);
     }
-  }, [draft]);
+  }, [draft, storageKey]);
   useEffect(() => {
     const guard = (e: BeforeUnloadEvent) => {
       if (!stored && draft.source) e.preventDefault();
@@ -137,21 +173,46 @@ export function BankGenerate() {
       if (!silent) setError(errorMessage(e));
     }
   }
+  if (projectError)
+    return (
+      <div className="bank-page">
+        <a className="back-link" href="/question-bank">
+          All projects
+        </a>
+        <Notice>{projectError}</Notice>
+      </div>
+    );
+  if (!project) return <Loading />;
+  if (project.archived)
+    return (
+      <div className="bank-page">
+        <a className="back-link" href={projectHref(project.id)}>
+          {project.name}
+        </a>
+        <Notice kind="info">
+          Restore this project in its settings before generating questions.
+        </Notice>
+      </div>
+    );
   return (
     <div className="bank-page bank-editor">
-      <a className="back-link" href="/question-bank">
-        <Icon name="back" size={16} />
-        Question bank
-      </a>
-      <div className="page-heading">
-        <div>
-          <p className="eyebrow">AI-ASSISTED AUTHORING</p>
-          <h1>Turn your notes into a starting point</h1>
-          <p className="muted">
-            Generate a small set of questions, then review every answer. You stay in control.
-          </p>
+      {!embedded && (
+        <a className="back-link" href={projectHref(project.id)}>
+          <Icon name="back" size={16} />
+          {project.name}
+        </a>
+      )}
+      {!embedded && (
+        <div className="page-heading">
+          <div>
+            <p className="eyebrow">AI-ASSISTED AUTHORING</p>
+            <h1>Turn your notes into a starting point</h1>
+            <p className="muted">
+              Generate a small set of questions, then review every answer. You stay in control.
+            </p>
+          </div>
         </div>
-      </div>
+      )}
       {error && <Notice>{error}</Notice>}
       {!busy &&
         job?.status !== 'completed' &&
@@ -171,14 +232,22 @@ export function BankGenerate() {
               >
                 Check again
               </button>
-              <a className="text-button" href="/question-bank/new">
-                Write a question instead
-              </a>
+              {!embedded && (
+                <a className="text-button" href={authorHref('new', project.id)}>
+                  Write a question instead
+                </a>
+              )}
             </div>
           </div>
         )}
       {job?.status === 'completed' ? (
-        <GeneratedQuestionsReview questionIds={job.questionIds} onGenerateMore={() => change({})} />
+        <GeneratedQuestionsReview
+          project={project}
+          questionIds={job.questionIds}
+          onGenerateMore={() => change({})}
+          onAdd={onAdd}
+          remaining={remaining}
+        />
       ) : (
         <form
           onSubmit={async (e) => {
@@ -203,7 +272,7 @@ export function BankGenerate() {
             try {
               const result = await api<Job>('/question-bank/generate', {
                 method: 'POST',
-                body: { ...submission, consent },
+                body: { ...submission, consent, projectId: project.id },
                 timeoutMs: 105000,
               });
               if (alive.current) {

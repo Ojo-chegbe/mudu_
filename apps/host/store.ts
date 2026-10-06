@@ -10,6 +10,13 @@ import type {
 } from '../../packages/exam-core/model.ts';
 import { transaction } from './database.ts';
 import { digest, token } from './security.ts';
+import {
+  admissionWindow,
+  candidateDeadline,
+  sittingDeadline,
+} from '../../packages/exam-core/timing.ts';
+import { syncRosterAssessment } from './roster-admission.ts';
+import { execution } from './exam-controls.ts';
 
 type SittingRow = {
   id: string;
@@ -96,6 +103,14 @@ export class ExamStore {
     if (!row) throw new DomainError('Assessment not found.', 404);
     return JSON.parse(String(row.definition));
   }
+  assertOwner(id: string, administrator: string) {
+    if (
+      !this.db
+        .prepare('SELECT 1 FROM assessment_owners WHERE assessment_id=? AND owner_id=?')
+        .get(id, administrator)
+    )
+      throw new DomainError('Assessment not found.', 404);
+  }
   sitting(id: string): SittingRow {
     const row = this.db.prepare('SELECT * FROM sittings WHERE id=?').get(id) as unknown as
       SittingRow | undefined;
@@ -119,6 +134,7 @@ export class ExamStore {
       this.db
         .prepare('INSERT INTO assessments VALUES(?,?,?)')
         .run(assessment.id, JSON.stringify(assessment), this.now());
+      this.db.prepare('INSERT INTO assessment_owners VALUES(?,?)').run(assessment.id, adminId);
       if (requestId)
         this.db
           .prepare('INSERT INTO assessment_creations VALUES(?,?,?)')
@@ -183,14 +199,27 @@ export class ExamStore {
     });
   }
   launch(assessmentId: string, adminId: string) {
+    this.assertOwner(assessmentId, adminId);
     return transaction(this.db, () => {
       const existing = this.db
         .prepare('SELECT * FROM sittings WHERE assessment_id=?')
         .get(assessmentId) as unknown as SittingRow | undefined;
       if (existing) return { id: existing.id, code: existing.code };
-      if (this.db.prepare('SELECT id FROM sittings WHERE deadline>?').get(this.now()))
+      if (
+        this.db
+          .prepare(
+            'SELECT s.id FROM sittings s LEFT JOIN exam_controls c ON c.sitting_id=s.id WHERE s.deadline>? OR c.paused_at IS NOT NULL',
+          )
+          .get(this.now())
+      )
         throw new DomainError('Finish the current sitting before starting another.', 409);
       const assessment = this.assessment(assessmentId);
+      syncRosterAssessment(this, assessmentId, adminId);
+      if (assessment.timing?.mode === 'individual' && assessment.timing.lastStartAt! <= this.now())
+        throw new DomainError(
+          'The last start time has passed. Edit the availability window before opening this assessment.',
+          409,
+        );
       const settings = this.db
         .prepare('SELECT mode FROM registration_settings WHERE assessment_id=?')
         .get(assessmentId);
@@ -216,7 +245,7 @@ export class ExamStore {
           code,
           JSON.stringify(assessment),
           started,
-          started + assessment.durationMinutes * 60000,
+          sittingDeadline(assessment, started),
         );
       this.event(id, adminId, 'sitting_started');
       this.db
@@ -237,13 +266,15 @@ export class ExamStore {
     );
   }
   end(assessmentId: string, adminId: string) {
+    this.assertOwner(assessmentId, adminId);
     this.reconcile();
     return transaction(this.db, () => {
       const sitting = this.db
         .prepare('SELECT * FROM sittings WHERE assessment_id=?')
         .get(assessmentId) as unknown as SittingRow | undefined;
       if (!sitting) throw new DomainError('This examination has not started.', 409);
-      if (sitting.deadline <= this.now()) return { ok: true };
+      const control = execution(this.db, sitting, this.now());
+      if (sitting.deadline <= control.now) return { ok: true };
       const now = this.now();
       const attempts = this.db
         .prepare("SELECT id,candidate_id FROM attempts WHERE sitting_id=? AND status='active'")
@@ -259,6 +290,9 @@ export class ExamStore {
         });
       }
       this.db.prepare('UPDATE sittings SET deadline=? WHERE id=?').run(now, sitting.id);
+      this.db
+        .prepare('UPDATE exam_controls SET paused_at=NULL,revision=revision+1 WHERE sitting_id=?')
+        .run(sitting.id);
       this.event(sitting.id, adminId, 'sitting_ended');
       return { ok: true };
     });
@@ -267,7 +301,7 @@ export class ExamStore {
     transaction(this.db, () => {
       const rows = this.db
         .prepare(
-          "SELECT id,sitting_id,candidate_id,deadline FROM attempts WHERE status='active' AND deadline<=?",
+          "SELECT id,sitting_id,candidate_id,deadline FROM attempts WHERE status='active' AND deadline<=? AND NOT EXISTS (SELECT 1 FROM exam_controls c WHERE c.sitting_id=attempts.sitting_id AND c.paused_at IS NOT NULL)",
         )
         .all(this.now());
       for (const row of rows) {
@@ -309,8 +343,24 @@ export class ExamStore {
         throw new DomainError('Candidate not eligible.', 403);
       const existing = this.findAttempt(sittingId, candidateId);
       if (existing) return existing;
-      if (this.now() >= sitting.deadline)
-        throw new DomainError('This examination has ended.', 409, 'EXAM_ENDED');
+      const control = execution(this.db, sitting, this.now());
+      if (control.pausedAt !== null)
+        throw new DomainError(
+          'The examination is paused. Wait for your administrator to resume it.',
+          409,
+          'EXAM_PAUSED',
+        );
+      const assessment = control.assessment;
+      const startedAt = this.now();
+      const window = admissionWindow(
+        assessment,
+        sitting.started_at,
+        control.admissionDeadline,
+        startedAt,
+      );
+      if (window.startRestriction === 'not_open')
+        throw new DomainError('This examination is not open yet.', 409, 'EXAM_NOT_OPEN');
+      if (!window.canStart) throw new DomainError('This examination has ended.', 409, 'EXAM_ENDED');
       const id = randomUUID();
       this.db
         .prepare('INSERT INTO attempts VALUES(?,?,?,?,?,?,?,?)')
@@ -319,8 +369,14 @@ export class ExamStore {
           sittingId,
           candidateId,
           'active',
-          this.now(),
-          sitting.deadline,
+          startedAt,
+          candidateDeadline(
+            assessment,
+            assessment.timing?.mode === 'individual'
+              ? Math.min(sitting.deadline, assessment.timing.finishBy ?? Infinity)
+              : control.admissionDeadline,
+            startedAt,
+          ),
           null,
           JSON.stringify(createOrder(JSON.parse(sitting.snapshot), randomInt)),
         );
@@ -364,6 +420,12 @@ export class ExamStore {
         return JSON.parse(String(prior.receipt)) as { revision: number; savedAt: number };
       }
       const acceptedAt = this.now();
+      if (execution(this.db, this.sitting(sittingId), acceptedAt).pausedAt !== null)
+        throw new DomainError(
+          'The examination is paused. Pending answers will save after it resumes.',
+          409,
+          'EXAM_PAUSED',
+        );
       if (attempt.status !== 'active' || acceptedAt >= attempt.deadline)
         throw new DomainError(
           'This attempt is closed. Answers cannot be changed.',
@@ -403,6 +465,12 @@ export class ExamStore {
       const attempt = this.findAttempt(sittingId, candidateId);
       if (!attempt) throw new DomainError('No examination attempt exists.', 409);
       if (attempt.status === 'active') {
+        if (execution(this.db, this.sitting(sittingId), this.now()).pausedAt !== null)
+          throw new DomainError(
+            'The examination is paused. You can submit after it resumes.',
+            409,
+            'EXAM_PAUSED',
+          );
         this.db
           .prepare("UPDATE attempts SET status='submitted',submitted_at=? WHERE id=?")
           .run(this.now(), attempt.id);
@@ -414,23 +482,58 @@ export class ExamStore {
   candidateView(sittingId: string, candidateId: string): CandidateView {
     this.reconcile();
     const sitting = this.sitting(sittingId);
-    const assessment: Assessment = JSON.parse(sitting.snapshot);
+    const control = execution(this.db, sitting, this.now());
+    const assessment = control.assessment;
     const candidate = this.db
       .prepare('SELECT name,identifier FROM candidates WHERE id=? AND assessment_id=?')
       .get(candidateId, sitting.assessment_id);
     if (!candidate) throw new DomainError('Candidate not found.', 404);
     const attempt = this.findAttempt(sittingId, candidateId);
+    const window = admissionWindow(
+      assessment,
+      sitting.started_at,
+      control.admissionDeadline,
+      control.now,
+    );
     return {
       serverNow: this.now(),
+      controls: { revision: control.revision, pausedAt: control.pausedAt },
+      announcements: this.db
+        .prepare(
+          `SELECT a.id,a.message,a.created_at,r.read_at FROM exam_announcements a
+        LEFT JOIN announcement_reads r ON r.announcement_id=a.id AND r.candidate_id=?
+        WHERE a.sitting_id=? ORDER BY a.created_at DESC,a.rowid DESC LIMIT 500`,
+        )
+        .all(candidateId, sittingId)
+        .map((a) => ({
+          id: String(a.id),
+          message: String(a.message),
+          createdAt: Number(a.created_at),
+          read: a.read_at != null,
+        })),
       candidate: { name: String(candidate.name), identifier: String(candidate.identifier) },
       sitting: {
         id: sittingId,
         title: assessment.title,
         course: assessment.course,
         instructions: assessment.instructions,
-        deadline: sitting.deadline,
+        deadline:
+          attempt?.deadline ??
+          candidateDeadline(
+            assessment,
+            assessment.timing?.mode === 'individual'
+              ? Math.min(sitting.deadline, assessment.timing.finishBy ?? Infinity)
+              : control.admissionDeadline,
+            control.now,
+          ),
         questionCount: assessment.questions.length,
         durationMinutes: assessment.durationMinutes,
+        timingMode: window.mode,
+        opensAt: window.opensAt,
+        lastStartAt: window.lastStartAt,
+        finishBy: window.finishBy,
+        canStart: window.canStart && control.pausedAt === null,
+        startRestriction: window.startRestriction,
       },
       attempt: attempt
         ? {
@@ -462,11 +565,13 @@ export class ExamStore {
         : null,
     };
   }
-  listAssessments() {
+  listAssessments(owner?: string) {
     this.reconcile();
     return this.db
-      .prepare('SELECT * FROM assessments ORDER BY created_at DESC')
-      .all()
+      .prepare(
+        'SELECT * FROM assessments WHERE ? IS NULL OR id IN (SELECT assessment_id FROM assessment_owners WHERE owner_id=?) ORDER BY created_at DESC',
+      )
+      .all(owner ?? null, owner ?? null)
       .map((row) => {
         const assessment: Assessment = JSON.parse(String(row.definition));
         const sitting = this.db
@@ -494,22 +599,88 @@ export class ExamStore {
           id: assessment.id,
           title: assessment.title,
           course: assessment.course,
-          durationMinutes: assessment.durationMinutes,
+          durationMinutes: sitting
+            ? execution(this.db, sitting, this.now()).assessment.durationMinutes
+            : assessment.durationMinutes,
           questionCount: assessment.questions.length,
           candidateCount: approved,
+          timingMode: assessment.timing?.mode ?? 'shared',
+          allowLateAdmission: assessment.allowLateAdmission ?? false,
           accessMode,
           createdAt: row.created_at,
-          status: !sitting ? 'draft' : sitting.deadline > this.now() ? 'active' : 'completed',
+          status: !sitting
+            ? 'draft'
+            : sitting.deadline > execution(this.db, sitting, this.now()).now
+              ? 'active'
+              : 'completed',
           sitting: sitting
             ? {
                 id: sitting.id,
                 code: sitting.code,
                 deadline: sitting.deadline,
                 startedAt: sitting.started_at,
+                pausedAt: execution(this.db, sitting, this.now()).pausedAt,
               }
             : null,
         };
       });
+  }
+  setAdmission(assessmentId: string, adminId: string, input: Record<string, unknown>) {
+    this.assertOwner(assessmentId, adminId);
+    if (typeof input.allowLateAdmission !== 'boolean')
+      throw new DomainError('Choose whether late admission is allowed.');
+    return transaction(this.db, () => {
+      const assessment = this.assessment(assessmentId);
+      const sitting = this.db
+        .prepare('SELECT id,deadline FROM sittings WHERE assessment_id=?')
+        .get(assessmentId);
+      if (typeof input.expectedAllowLateAdmission !== 'boolean')
+        throw new DomainError('Refresh the admission settings before changing them.');
+      if (
+        Boolean(assessment.allowLateAdmission) !== input.expectedAllowLateAdmission &&
+        Boolean(assessment.allowLateAdmission) !== input.allowLateAdmission
+      )
+        throw new DomainError(
+          'Admission settings changed in another window. Refresh and try again.',
+          409,
+        );
+      if (
+        sitting &&
+        Number(sitting.deadline) <=
+          execution(this.db, this.sitting(String(sitting.id)), this.now()).now
+      )
+        throw new DomainError('Completed examinations stay closed.', 409);
+      if (sitting && input.allowLateAdmission) {
+        const frozen = this.sitting(String(sitting.id));
+        const control = execution(this.db, frozen, this.now());
+        if (
+          admissionWindow(
+            control.assessment,
+            frozen.started_at,
+            control.admissionDeadline,
+            control.now,
+          ).startRestriction === 'closed'
+        )
+          throw new DomainError(
+            'The start window has closed. Existing attempts can continue, but no new candidates can begin.',
+            409,
+          );
+      }
+      if (Boolean(assessment.allowLateAdmission) !== input.allowLateAdmission) {
+        this.db
+          .prepare('UPDATE assessments SET definition=? WHERE id=?')
+          .run(
+            JSON.stringify({ ...assessment, allowLateAdmission: input.allowLateAdmission }),
+            assessmentId,
+          );
+        this.event(sitting ? String(sitting.id) : null, adminId, 'late_admission_changed', {
+          assessmentId,
+          enabled: input.allowLateAdmission,
+        });
+      }
+      const added = syncRosterAssessment(this, assessmentId, adminId);
+      return { allowLateAdmission: input.allowLateAdmission, added };
+    });
   }
   manualScores(attemptId: string): Record<string, number> {
     return Object.fromEntries(
@@ -555,6 +726,7 @@ export class ExamStore {
     };
   }
   mark(assessmentId: string, candidateId: string, input: Record<string, unknown>, adminId: string) {
+    this.assertOwner(assessmentId, adminId);
     const review = this.review(assessmentId, candidateId);
     return transaction(this.db, () => {
       const question = review.questions.find((q) => q.id === input.questionId);
@@ -597,7 +769,7 @@ export class ExamStore {
     const summary = this.listAssessments().find((item) => item.id === assessmentId)!;
     if (!summary) throw new DomainError('Assessment not found.', 404);
     const assessment: Assessment = summary.sitting
-      ? JSON.parse(this.sitting(summary.sitting.id).snapshot)
+      ? execution(this.db, this.sitting(summary.sitting.id), this.now()).assessment
       : this.assessment(assessmentId);
     const candidates = this.db
       .prepare(
@@ -636,7 +808,10 @@ export class ExamStore {
     const events = summary.sitting
       ? this.db
           .prepare(
-            'SELECT id,kind,created_at AS createdAt FROM events WHERE sitting_id=? ORDER BY id DESC LIMIT 12',
+            `SELECT e.id,e.kind,e.created_at AS createdAt,json_extract(e.detail,'$.reason') AS reason,
+              json_extract(e.detail,'$.minutes') AS minutes,c.name AS candidateName FROM events e
+              LEFT JOIN candidates c ON c.id=json_extract(e.detail,'$.candidateId')
+              WHERE e.sitting_id=? ORDER BY e.id DESC LIMIT 50`,
           )
           .all(summary.sitting.id)
       : [];
@@ -648,7 +823,7 @@ export class ExamStore {
         .get(assessmentId) ?? null;
     const rerun = this.db
       .prepare(
-        "SELECT json_extract(detail,'$.sourceId') AS id FROM events WHERE kind='assessment_rerun_prepared' AND json_extract(detail,'$.assessmentId')=? LIMIT 1",
+        "SELECT coalesce(json_extract(detail,'$.sourceId'),json_extract(detail,'$.sourceAssessmentId')) AS id FROM events WHERE kind IN ('assessment_rerun_prepared','local_run_prepared') AND json_extract(detail,'$.assessmentId')=? LIMIT 1",
       )
       .get(assessmentId);
     const source = rerun

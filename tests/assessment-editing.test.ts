@@ -101,9 +101,13 @@ test('reruns can use an owned roster snapshot instead of previous candidates, sa
   assert.equal(
     f.editor.rerun(f.exam.id, 'admin', request).id,
     result.id,
-    'retry returns original snapshot even after membership changes',
+    'retry returns the same new assessment after membership changes',
   );
-  assert.equal(f.store.detail(result.id).candidates.length, 1);
+  assert.equal(
+    f.store.detail(result.id).candidates.length,
+    2,
+    'approved later members receive the linked draft automatically',
+  );
   assert.throws(
     () =>
       f.editor.rerun(f.exam.id, 'admin', {

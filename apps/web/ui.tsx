@@ -49,6 +49,29 @@ export function Icon({ name, size = 20 }: { name: string; size?: number }) {
       </>
     ),
     plus: <path d="M12 5v14M5 12h14" />,
+    trash: (
+      <>
+        <path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7" />
+      </>
+    ),
+    chevron: <path d="m6 9 6 6 6-6" />,
+    sparkles: (
+      <>
+        <path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5L12 3z" />
+        <path d="M20 2v4m-2-2h4" />
+      </>
+    ),
+    settings: (
+      <>
+        <path d="M3 6h4m4 0h10M3 12h10m4 0h4M3 18h4m4 0h10" />
+        <circle cx="9" cy="6" r="2" />
+        <circle cx="15" cy="12" r="2" />
+        <circle cx="9" cy="18" r="2" />
+      </>
+    ),
+    folder: (
+      <path d="M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" />
+    ),
     arrow: <path d="M5 12h14m-6-6 6 6-6 6" />,
     back: <path d="M19 12H5m6-6-6 6 6 6" />,
     check: <path d="m5 12 4 4L19 6" />,
@@ -150,6 +173,40 @@ export function Loading() {
     </div>
   );
 }
+export function FormDialog({
+  title,
+  children,
+  onClose,
+  busy = false,
+}: {
+  title: string;
+  children: ReactNode;
+  onClose: () => void;
+  busy?: boolean;
+}) {
+  const ref = useRef<HTMLDialogElement>(null),
+    id = useId();
+  useEffect(() => {
+    const dialog = ref.current;
+    dialog?.showModal();
+    return () => dialog?.close();
+  }, []);
+  return (
+    <dialog
+      ref={ref}
+      className="dialog"
+      aria-labelledby={id}
+      onCancel={(e) => {
+        e.preventDefault();
+        if (!busy) onClose();
+      }}
+    >
+      <h2 id={id}>{title}</h2>
+      <div className="dialog-content">{children}</div>
+    </dialog>
+  );
+}
+
 export function Dialog({
   title,
   children,

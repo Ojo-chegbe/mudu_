@@ -5,15 +5,15 @@ Administrators manage named groups at `/rosters`. Candidates join through `/join
 ## Admission rules
 
 - Importing a name and ID establishes expected eligibility only; it does not create an account, verify identity, or approve membership.
-- Every joining request needs administrator approval. A previously unverified candidate number additionally requires an explicit institutional identity check. Verified number ownership remains unique.
+- Every joining request needs administrator approval. Candidate numbers are assigned uniquely within the workspace; there is no separate identity-verification step. Direct enrolment of an existing account creates approved membership and notifies that account.
 - An optional expected list restricts who may request membership. A closed or archived group accepts no new requests. Existing membership remains visible.
 - Removal changes future group eligibility only. It never deletes accounts or earlier assessment enrolments/results.
 
-## Assessment snapshots
+## Connected assessments
 
 The assessment creation UI defaults to choosing one roster. The server reads its approved, verified members—not the client-supplied candidate array—and requires the reviewed roster revision. It persists a name/version reference and copies eligible members into the assessment in the same transaction as creation.
 
-Roster assessments do not use per-assessment registration links. Existing legacy assessment registration remains supported. Before an examination starts, administrators can review and add newly approved roster members explicitly. A revision check prevents including unseen concurrent membership changes. Once a sitting exists, additions are prohibited.
+Roster assessments do not use per-assessment registration links. Existing legacy assessment registration remains supported. Newly approved members are admitted automatically before opening. After opening, the administrator's late-admission policy controls new enrolments while the start window remains open. Existing enrolments and results remain independent of later membership removal. The original roster revision remains an authoring/audit reference, not a frozen eligibility list. See [timing and admission](TIMING-AND-ADMISSION.md) for deadlines, capacity and recovery rules.
 
 ## Editing and recovery
 
@@ -23,4 +23,9 @@ Roster membership requests and decisions feed the notification centre. Assessmen
 
 ## Limits and deployment
 
-This implementation supports the current single-administrator workspace, one roster per assessment, at most 500 approved members, and at most 2,000 membership requests per roster. Canonical membership mutations are disabled on offline identity replicas. Multi-roster merging, external invitations, and offline identity distribution are not implemented here.
+Private administrator workspaces support one roster per assessment, at most 500
+approved members, and at most 2,000 membership records per roster. Connected
+workspaces can now share rosters, requests, approvals and personal invitations
+through private cloud storage; see [setup and boundaries](CLOUD-ROSTERS.md).
+Canonical membership mutations are disabled on offline identity replicas.
+Multi-roster merging and prepared offline identity distribution remain separate work.

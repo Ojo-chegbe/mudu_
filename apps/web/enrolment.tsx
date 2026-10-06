@@ -26,7 +26,7 @@ export function RosterEnrolment({
   const [message, setMessage] = useState('');
   const [copied, setCopied] = useState('');
   const [cancel, setCancel] = useState<string | null>(null);
-  const origin = useCandidateOrigin();
+  const origin = useCandidateOrigin(true);
   useEffect(() => {
     let alive = true;
     api<{ candidates: Account[] }>('/enrolment-directory')
@@ -310,19 +310,29 @@ export function RosterEnrolment({
 export function AcceptEnrolment({ token }: { token: string }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [invite, setInvite] = useState<{ name: string; accepting: boolean } | null>(null);
+  const [invite, setInvite] = useState<{
+    name: string;
+    accepting: boolean;
+    claimed?: boolean;
+    status?: string | null;
+  } | null>(null);
   useEffect(() => {
-    void api<{ name: string; accepting: boolean }>(`/enrolment-join/${token}`)
+    void api<{ name: string; accepting: boolean; claimed?: boolean; status?: string | null }>(
+      `/enrolment-join/${token}`,
+    )
       .then(setInvite)
       .catch((e) => setError(errorMessage(e)));
   }, [token]);
   return (
     <main className="content">
       <section className="panel padded">
-        <h1>{invite ? `Join ${invite.name}` : 'Your invitation'}</h1>
+        <h1>{invite ? `${invite.claimed ? '' : 'Join '}${invite.name}` : 'Your invitation'}</h1>
         <p>
-          Accept this invitation to add the group to your account. Use the email address your
-          organiser invited.
+          {invite?.claimed
+            ? invite.status === 'rejected'
+              ? 'Your membership is no longer active. Contact the organiser if you need to rejoin.'
+              : 'This invitation has already been accepted. View your groups for your current membership and assessments.'
+            : 'Accept this invitation to add the group to your account. Use the email address your organiser invited.'}
         </p>
         {error && <Notice>{error}</Notice>}
         <p>
@@ -341,24 +351,28 @@ export function AcceptEnrolment({ token }: { token: string }) {
             Use a different account
           </button>
         </p>
-        <button
-          className="button primary"
-          disabled={busy || !invite?.accepting}
-          onClick={async () => {
-            setBusy(true);
-            setError('');
-            try {
-              await api(`/enrolment-join/${token}`, { method: 'POST', body: {} });
-              location.href = '/exam';
-            } catch (e) {
-              setError(errorMessage(e));
-              setBusy(false);
-            }
-          }}
-        >
-          {busy ? 'Joining…' : 'Join group'}
-        </button>
-        {invite && !invite.accepting && <p>Joining is closed. Contact the organiser.</p>}
+        {!invite?.claimed && (
+          <button
+            className="button primary"
+            disabled={busy || !invite?.accepting}
+            onClick={async () => {
+              setBusy(true);
+              setError('');
+              try {
+                await api(`/enrolment-join/${token}`, { method: 'POST', body: {} });
+                location.href = '/exam';
+              } catch (e) {
+                setError(errorMessage(e));
+                setBusy(false);
+              }
+            }}
+          >
+            {busy ? 'Joining…' : 'Join group'}
+          </button>
+        )}
+        {invite && !invite.accepting && !invite.claimed && (
+          <p>Joining is closed. Contact the organiser.</p>
+        )}
         <p>
           <a href="/exam">My examinations</a>
         </p>

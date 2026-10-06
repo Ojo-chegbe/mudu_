@@ -12,12 +12,28 @@ export interface BankContent {
 }
 export interface BankItem extends BankContent {
   id: string;
+  projectId: string;
   revision: number;
   status: BankStatus;
   updatedAt: number;
   origin: 'manual' | 'ai';
   evidence: string;
   model: string | null;
+}
+export interface BankProject {
+  id: string;
+  name: string;
+  course: string;
+  description: string;
+  archived: boolean;
+  revision: number;
+  updatedAt: number;
+  counts: Record<BankStatus, number>;
+}
+export interface BankProjectsPage {
+  items: BankProject[];
+  total: number;
+  counts: { active: number; archived: number };
 }
 export interface BankPage {
   items: BankItem[];

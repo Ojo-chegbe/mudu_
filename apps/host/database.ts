@@ -7,7 +7,7 @@ export function openDatabase(path: string): DatabaseSync {
     'PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;',
   );
   const version = Number(db.prepare('PRAGMA user_version').get()?.user_version);
-  if (version > 8) {
+  if (version > 20) {
     db.close();
     throw new Error('This database needs a newer version of MUDU Host.');
   }
@@ -202,6 +202,270 @@ export function openDatabase(path: string): DatabaseSync {
       ) STRICT;
       CREATE INDEX bank_generation_owner ON bank_generations(owner_id,created_at);
       PRAGMA user_version = 8;
+    `),
+    );
+  }
+  if (version < 9) {
+    if (version > 0 && path !== ':memory:' && !existsSync(`${path}.before-v9`))
+      db.prepare('VACUUM INTO ?').run(`${path}.before-v9`);
+    transaction(db, () => {
+      db.exec(`
+        CREATE TABLE bank_projects (
+          id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, name TEXT NOT NULL,
+          course TEXT NOT NULL, description TEXT NOT NULL,
+          archived INTEGER NOT NULL CHECK(archived IN (0,1)),
+          revision INTEGER NOT NULL, updated_at INTEGER NOT NULL
+        ) STRICT;
+        CREATE INDEX bank_projects_owner ON bank_projects(owner_id,archived,updated_at DESC);
+        CREATE TABLE bank_question_projects (
+          question_id TEXT PRIMARY KEY REFERENCES bank_questions(id),
+          project_id TEXT NOT NULL REFERENCES bank_projects(id)
+        ) STRICT;
+        CREATE INDEX bank_project_questions ON bank_question_projects(project_id,question_id);
+        INSERT INTO bank_projects
+          SELECT lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-' ||
+            lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(6))),
+            owner_id,'Imported questions','','Questions from your previous question bank.',0,1,MAX(updated_at)
+          FROM bank_questions GROUP BY owner_id;
+        INSERT INTO bank_question_projects
+          SELECT q.id,p.id FROM bank_questions q JOIN bank_projects p ON p.owner_id=q.owner_id;
+        CREATE TRIGGER bank_project_owner_insert BEFORE INSERT ON bank_question_projects
+          WHEN (SELECT owner_id FROM bank_questions WHERE id=NEW.question_id) !=
+            (SELECT owner_id FROM bank_projects WHERE id=NEW.project_id)
+          BEGIN SELECT RAISE(ABORT,'Question and project owners must match'); END;
+        CREATE TRIGGER bank_project_owner_update BEFORE UPDATE ON bank_question_projects
+          WHEN (SELECT owner_id FROM bank_questions WHERE id=NEW.question_id) !=
+            (SELECT owner_id FROM bank_projects WHERE id=NEW.project_id)
+          BEGIN SELECT RAISE(ABORT,'Question and project owners must match'); END;
+        PRAGMA user_version=9;
+      `);
+    });
+  }
+  if (version < 10) {
+    if (version > 0 && path !== ':memory:' && !existsSync(`${path}.before-v10`))
+      db.prepare('VACUUM INTO ?').run(`${path}.before-v10`);
+    transaction(db, () =>
+      db.exec(`CREATE TABLE bank_deleted_questions (
+      question_id TEXT PRIMARY KEY REFERENCES bank_questions(id), actor_id TEXT NOT NULL,
+      deleted_at INTEGER NOT NULL
+    ) STRICT; PRAGMA user_version=10;`),
+    );
+  }
+  if (version < 11) {
+    transaction(db, () =>
+      db.exec(`CREATE TABLE candidate_presence (
+      sitting_id TEXT NOT NULL REFERENCES sittings(id),
+      candidate_id TEXT NOT NULL REFERENCES candidates(id),
+      last_seen_at INTEGER NOT NULL, reconnects INTEGER NOT NULL DEFAULT 0 CHECK(reconnects>=0),
+      PRIMARY KEY(sitting_id,candidate_id)
+    ) STRICT; PRAGMA user_version=11;`),
+    );
+  }
+  if (version < 12) {
+    transaction(db, () =>
+      db.exec(`
+      CREATE TABLE exam_controls (
+        sitting_id TEXT PRIMARY KEY REFERENCES sittings(id), revision INTEGER NOT NULL DEFAULT 0,
+        paused_at INTEGER, pause_total_ms INTEGER NOT NULL DEFAULT 0,
+        extra_ms INTEGER NOT NULL DEFAULT 0, shared_deadline INTEGER
+      ) STRICT;
+      CREATE TABLE exam_announcements (
+        id TEXT PRIMARY KEY, sitting_id TEXT NOT NULL REFERENCES sittings(id),
+        message TEXT NOT NULL, actor_id TEXT NOT NULL, created_at INTEGER NOT NULL
+      ) STRICT;
+      CREATE INDEX announcements_sitting ON exam_announcements(sitting_id,created_at);
+      CREATE TABLE announcement_reads (
+        announcement_id TEXT NOT NULL REFERENCES exam_announcements(id),
+        candidate_id TEXT NOT NULL REFERENCES candidates(id), read_at INTEGER NOT NULL,
+        PRIMARY KEY(announcement_id,candidate_id)
+      ) STRICT;
+      CREATE TABLE exam_control_receipts (
+        sitting_id TEXT NOT NULL REFERENCES sittings(id), operation_id TEXT NOT NULL,
+        actor_id TEXT NOT NULL, fingerprint TEXT NOT NULL, receipt TEXT NOT NULL,
+        PRIMARY KEY(sitting_id,operation_id)
+      ) STRICT;
+      PRAGMA user_version=12;
+    `),
+    );
+  }
+  if (version < 13) {
+    if (version > 0 && path !== ':memory:' && !existsSync(`${path}.before-v13`))
+      db.prepare('VACUUM INTO ?').run(`${path}.before-v13`);
+    // Rebuild only this table so the original Host account stays unique, while
+    // cloud administrators can use NULL in the legacy singleton column.
+    db.exec('PRAGMA foreign_keys=OFF');
+    try {
+      transaction(db, () => {
+        db.exec(`
+          CREATE TABLE administrators_next (
+            id TEXT PRIMARY KEY,name TEXT NOT NULL,password_hash TEXT NOT NULL,
+            singleton INTEGER UNIQUE CHECK(singleton=1)
+          ) STRICT;
+          INSERT INTO administrators_next SELECT * FROM administrators;
+          DROP TABLE administrators;
+          ALTER TABLE administrators_next RENAME TO administrators;
+          CREATE TABLE admin_provider_identities (
+            administrator_id TEXT PRIMARY KEY REFERENCES administrators(id),
+            provider_user_id TEXT NOT NULL UNIQUE,email TEXT NOT NULL UNIQUE
+          ) STRICT;
+          CREATE TABLE provider_sessions (
+            token_hash TEXT PRIMARY KEY REFERENCES sessions(token_hash) ON DELETE CASCADE,
+            provider_user_id TEXT NOT NULL,access_token TEXT NOT NULL,
+            refresh_token TEXT NOT NULL,expires_at INTEGER NOT NULL
+          ) STRICT;
+          CREATE TABLE assessment_owners (
+            assessment_id TEXT PRIMARY KEY REFERENCES assessments(id),owner_id TEXT NOT NULL
+          ) STRICT;
+          CREATE INDEX assessment_owner ON assessment_owners(owner_id,assessment_id);
+          INSERT INTO assessment_owners
+            SELECT a.id,MIN(e.actor_id) FROM assessments a JOIN events e
+              ON e.kind='assessment_created' AND json_extract(e.detail,'$.assessmentId')=a.id
+              GROUP BY a.id HAVING COUNT(DISTINCT e.actor_id)=1;
+          INSERT OR IGNORE INTO assessment_owners
+            SELECT assessment_id,MIN(admin_id) FROM assessment_creations
+              GROUP BY assessment_id HAVING COUNT(DISTINCT admin_id)=1;
+          INSERT OR IGNORE INTO assessment_owners
+            SELECT a.id,r.owner_id FROM assessments a JOIN assessment_rosters l ON l.assessment_id=a.id
+              JOIN rosters r ON r.id=l.roster_id;
+          INSERT OR IGNORE INTO assessment_owners
+            SELECT a.id,d.id FROM assessments a JOIN administrators d ON d.singleton=1;
+        `);
+        if (db.prepare('PRAGMA foreign_key_check').all().length)
+          throw new Error('Workspace migration could not preserve database references.');
+        db.exec('PRAGMA user_version=13');
+      });
+    } finally {
+      db.exec('PRAGMA foreign_keys=ON');
+    }
+  }
+  if (version < 14) {
+    if (version > 0 && path !== ':memory:' && !existsSync(`${path}.before-v14`))
+      db.prepare('VACUUM INTO ?').run(`${path}.before-v14`);
+    transaction(db, () =>
+      db.exec(`
+      CREATE TABLE cloud_instance (singleton INTEGER PRIMARY KEY CHECK(singleton=1),id TEXT NOT NULL);
+      CREATE TABLE cloud_sync_jobs (
+        id TEXT PRIMARY KEY,owner_id TEXT NOT NULL REFERENCES administrators(id),provider_user_id TEXT NOT NULL,
+        assessment_id TEXT NOT NULL REFERENCES assessments(id),sitting_id TEXT NOT NULL,host_id TEXT NOT NULL,
+        title TEXT NOT NULL,payload TEXT NOT NULL,digest TEXT NOT NULL,expected_revision INTEGER NOT NULL,
+        state TEXT NOT NULL CHECK(state IN ('pending','uploading','retry','conflict','synced')),
+        parts INTEGER NOT NULL,uploaded INTEGER NOT NULL DEFAULT 0,attempts INTEGER NOT NULL DEFAULT 0,
+        retry_at INTEGER NOT NULL DEFAULT 0,error TEXT,synced_at INTEGER,revision INTEGER,created_at INTEGER NOT NULL
+      ) STRICT;
+      CREATE UNIQUE INDEX cloud_pending_exam ON cloud_sync_jobs(owner_id,assessment_id) WHERE state!='synced';
+      CREATE INDEX cloud_jobs_due ON cloud_sync_jobs(state,retry_at);
+      PRAGMA user_version=14;
+    `),
+    );
+  }
+  if (version < 15) {
+    if (version > 0 && path !== ':memory:' && !existsSync(`${path}.before-v15`))
+      db.prepare('VACUUM INTO ?').run(`${path}.before-v15`);
+    transaction(db, () =>
+      db.exec(`
+      CREATE TABLE candidate_provider_identities (
+        account_id TEXT PRIMARY KEY REFERENCES accounts(id),
+        provider_user_id TEXT NOT NULL UNIQUE
+      ) STRICT;
+      PRAGMA user_version=15;
+    `),
+    );
+  }
+  if (version < 16) {
+    if (version > 0 && path !== ':memory:' && !existsSync(`${path}.before-v16`))
+      db.prepare('VACUUM INTO ?').run(`${path}.before-v16`);
+    transaction(db, () =>
+      db.exec(`
+      CREATE TABLE authoring_drafts (
+        id TEXT PRIMARY KEY,owner_id TEXT NOT NULL REFERENCES administrators(id),
+        payload TEXT,revision INTEGER NOT NULL,updated_at INTEGER NOT NULL
+      ) STRICT;
+      CREATE INDEX authoring_draft_owner ON authoring_drafts(owner_id,id);
+      PRAGMA user_version=16;
+    `),
+    );
+  }
+  if (version < 17) {
+    if (version > 0 && path !== ':memory:' && !existsSync(`${path}.before-v17`))
+      db.prepare('VACUUM INTO ?').run(`${path}.before-v17`);
+    transaction(db, () =>
+      db.exec(`
+      CREATE TABLE local_preparations (
+        id TEXT PRIMARY KEY,owner_id TEXT NOT NULL REFERENCES administrators(id),
+        source_id TEXT NOT NULL REFERENCES assessments(id),run_id TEXT NOT NULL UNIQUE,
+        state TEXT NOT NULL CHECK(state IN ('pending','ready','completed','cancelled')),
+        sealed TEXT NOT NULL,digest TEXT NOT NULL,source_revision INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,error TEXT,
+        downloaded INTEGER,cloud_closed INTEGER NOT NULL DEFAULT 0
+      ) STRICT;
+      CREATE UNIQUE INDEX one_local_preparation ON local_preparations(source_id) WHERE state IN ('pending','ready');
+      CREATE TABLE local_admission (
+        preparation_id TEXT NOT NULL REFERENCES local_preparations(id),
+        candidate_id TEXT NOT NULL REFERENCES candidates(id),account_id TEXT NOT NULL REFERENCES accounts(id),
+        pass_hash TEXT NOT NULL UNIQUE,expires_at INTEGER NOT NULL,revision INTEGER NOT NULL DEFAULT 1,
+        PRIMARY KEY(preparation_id,account_id)
+      ) STRICT;
+      CREATE TABLE offline_candidate_sessions (
+        token_hash TEXT PRIMARY KEY REFERENCES sessions(token_hash) ON DELETE CASCADE,
+        preparation_id TEXT NOT NULL REFERENCES local_preparations(id)
+      ) STRICT;
+      PRAGMA user_version=17;
+    `),
+    );
+  }
+  if (version < 18) {
+    if (version > 0 && path !== ':memory:' && !existsSync(`${path}.before-v18`))
+      db.prepare('VACUUM INTO ?').run(`${path}.before-v18`);
+    transaction(db, () =>
+      db.exec(`
+      CREATE TABLE password_recovery (
+        token_hash TEXT PRIMARY KEY, provider_user_id TEXT NOT NULL, proof_hash TEXT NOT NULL,
+        encrypted_session TEXT NOT NULL, csrf TEXT NOT NULL,
+        expires_at INTEGER NOT NULL, completed INTEGER NOT NULL DEFAULT 0
+      ) STRICT;
+      PRAGMA user_version=18;
+    `),
+    );
+  }
+  if (version < 19) {
+    if (version > 0 && path !== ':memory:' && !existsSync(`${path}.before-v19`))
+      db.prepare('VACUUM INTO ?').run(`${path}.before-v19`);
+    transaction(db, () =>
+      db.exec(`
+      CREATE TABLE admin_device_access (
+        administrator_id TEXT PRIMARY KEY REFERENCES administrators(id) ON DELETE CASCADE,
+        password_hash TEXT NOT NULL, enabled_at INTEGER NOT NULL
+      ) STRICT;
+      CREATE TABLE admin_device_sessions (
+        token_hash TEXT PRIMARY KEY REFERENCES sessions(token_hash) ON DELETE CASCADE,
+        administrator_id TEXT NOT NULL REFERENCES admin_device_access(administrator_id) ON DELETE CASCADE
+      ) STRICT;
+      PRAGMA user_version=19;
+    `),
+    );
+  }
+  if (version < 20) {
+    if (version > 0 && path !== ':memory:' && !existsSync(`${path}.before-v20`))
+      db.prepare('VACUUM INTO ?').run(`${path}.before-v20`);
+    transaction(db, () =>
+      db.exec(`
+      CREATE TABLE workspace_connections (
+        token_hash TEXT PRIMARY KEY REFERENCES sessions(token_hash) ON DELETE CASCADE,
+        mode TEXT NOT NULL CHECK(mode IN ('auto','offline')),
+        state TEXT NOT NULL CHECK(state IN ('online','offline')),
+        checked_at INTEGER NOT NULL
+      ) STRICT;
+      CREATE TABLE account_preferences (
+        principal_id TEXT NOT NULL,role TEXT NOT NULL CHECK(role IN ('admin','candidate')),
+        text_size TEXT NOT NULL CHECK(text_size IN ('normal','large')),
+        reduced_motion TEXT NOT NULL CHECK(reduced_motion IN ('system','reduce')),
+        notification_badge INTEGER NOT NULL CHECK(notification_badge IN (0,1)),
+        offline_setup_completed INTEGER NOT NULL DEFAULT 0 CHECK(offline_setup_completed IN (0,1)),
+        PRIMARY KEY(role,principal_id)
+      ) STRICT;
+      INSERT INTO account_preferences SELECT administrator_id,'admin','normal','system',1,1 FROM admin_device_access;
+      INSERT OR IGNORE INTO account_preferences SELECT a.id,'admin','normal','system',1,1 FROM administrators a JOIN events e ON e.actor_id=a.id AND e.kind='device_access_enabled' GROUP BY a.id;
+      PRAGMA user_version=20;
     `),
     );
   }

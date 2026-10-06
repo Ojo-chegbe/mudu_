@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import type { AuthState } from '../../packages/contracts/http.ts';
 import type { Answer, CandidateView } from '../../packages/exam-core/model.ts';
+import { CandidateAnnouncements } from './candidate-announcements.tsx';
 import { api, ApiError, errorMessage } from './api.ts';
 import { AnswerOutbox, browserQueueStorage } from './outbox.ts';
 import { Brand, Icon, Loading, Notice, PasswordInput, formatTime } from './ui.tsx';
@@ -20,6 +21,7 @@ export function Candidate({
 }) {
   const [state, setState] = useState<CandidateView | null>(null);
   const [error, setError] = useState('');
+  const [deviceRecovery, setDeviceRecovery] = useState(false);
   const [busy, setBusy] = useState(false);
   const [index, setIndex] = useState(0);
   const [remaining, setRemaining] = useState(0);
@@ -39,6 +41,7 @@ export function Candidate({
   stateRef.current = state;
   const attemptId = state?.attempt?.id;
   const attemptStatus = state?.attempt?.status;
+  const paused = state?.controls?.pausedAt != null;
   const authenticated =
     auth.role === 'candidate' && (assessmentId ? Boolean(auth.accountId) : !auth.accountId);
   const examApi = assessmentId ? `/candidate/examinations/${assessmentId}` : '/candidate';
@@ -69,7 +72,10 @@ export function Candidate({
             );
         }
       setError('');
+      setDeviceRecovery(false);
     } catch (error) {
+      if (error instanceof ApiError && error.code === 'ONLINE_DEVICE_CHANGED')
+        setDeviceRecovery(true);
       setError(errorMessage(error));
     }
   }
@@ -78,18 +84,53 @@ export function Candidate({
     void refresh();
     const timer = setInterval(refresh, 10000);
     return () => clearInterval(timer);
-  }, [authenticated]);
+  }, [authenticated, examApi]);
+  useEffect(() => {
+    if (!authenticated || !state || (attemptStatus && attemptStatus !== 'active')) return;
+    let stopped = false;
+    let sending = false;
+    const beat = async () => {
+      if (stopped || sending) return;
+      sending = true;
+      try {
+        const result = await api<{ ended: boolean }>(`${examApi}/heartbeat`, {
+          method: 'POST',
+          body: {},
+          timeoutMs: 10000,
+        });
+        if (result.ended) stopped = true;
+      } catch (error) {
+        if (error instanceof ApiError && [401, 403].includes(error.status)) stopped = true;
+        // Answer saving and state recovery display their own connection errors.
+      } finally {
+        sending = false;
+      }
+    };
+    void beat();
+    const timer = setInterval(() => void beat(), 15000);
+    window.addEventListener('online', beat);
+    window.addEventListener('focus', beat);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+      window.removeEventListener('online', beat);
+      window.removeEventListener('focus', beat);
+    };
+  }, [authenticated, examApi, state?.sitting.id, attemptStatus]);
   useEffect(() => {
     if (!state) return;
-    const initial = state.sitting.deadline - state.serverNow;
+    const initial =
+      (state.attempt?.deadline ?? state.sitting.deadline) -
+      (state.controls?.pausedAt ?? state.serverNow);
     const at = performance.now();
     setRemaining(initial);
+    if (state.controls?.pausedAt != null) return;
     const timer = setInterval(
       () => setRemaining(Math.max(0, initial - (performance.now() - at))),
       250,
     );
     return () => clearInterval(timer);
-  }, [state?.serverNow]);
+  }, [state?.serverNow, state?.controls?.pausedAt]);
   useEffect(() => {
     if (!attemptId || attemptStatus !== 'active') {
       setQueueReady(false);
@@ -149,6 +190,11 @@ export function Candidate({
           );
       });
     const retry = () => {
+      if (stateRef.current?.controls?.pausedAt != null) return;
+      if (current.error instanceof ApiError && current.error.code === 'EXAM_PAUSED') {
+        void current.flush();
+        return;
+      }
       if (!(current.error instanceof ApiError && [401, 403, 409].includes(current.error.status)))
         void current.flush();
     };
@@ -219,6 +265,7 @@ export function Candidate({
       !queueReady ||
       unsavedCount > 0 ||
       remaining <= 0 ||
+      stateRef.current?.controls?.pausedAt != null ||
       stateRef.current?.attempt?.status !== 'active'
     )
       return;
@@ -276,6 +323,20 @@ export function Candidate({
           </button>
         )}
       </header>
+      {authenticated && state && (
+        <>
+          {paused && (
+            <div className="candidate-pause-banner" role="status">
+              <strong>Examination paused</strong>
+              <p>
+                Your timer is frozen. Saved answers are safe. Wait for your administrator to resume;
+                do not close this page if you have pending saves.
+              </p>
+            </div>
+          )}
+          <CandidateAnnouncements items={state.announcements ?? []} examApi={examApi} />
+        </>
+      )}
       {!authenticated ? (
         <main className="candidate-login">
           <div className="auth-card">
@@ -335,6 +396,33 @@ export function Candidate({
             Managing an assessment? <a href="/">Administrator sign-in</a>
           </p>
         </main>
+      ) : deviceRecovery ? (
+        <main className="candidate-login">
+          <h1>Continue on this device?</h1>
+          <p>
+            Your examination is open on another device. Continuing here restores your saved answers
+            and closes access on the other device. Your timer does not restart.
+          </p>
+          {error && <Notice>{error}</Notice>}
+          <button
+            className="button primary"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              try {
+                await api(`${examApi}/claim`, { method: 'POST', body: {} });
+                setDeviceRecovery(false);
+                await refresh();
+              } catch (error) {
+                setError(errorMessage(error));
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            {busy ? 'Restoring…' : 'Continue on this device'}
+          </button>
+        </main>
       ) : !state ? (
         <main className="candidate-login">{error ? <Notice>{error}</Notice> : <Loading />}</main>
       ) : !attempt ? (
@@ -352,7 +440,9 @@ export function Candidate({
             </span>
             <span>
               <Icon name="clock" />
-              {formatTime(remaining)} remaining
+              {state.sitting.timingMode === 'individual'
+                ? `${state.sitting.durationMinutes} minutes from when you begin`
+                : `${formatTime(remaining)} remaining`}
             </span>
           </div>
           <section className="panel padded">
@@ -363,20 +453,66 @@ export function Candidate({
             </p>
             <ul className="instruction-list">
               <li>
-                The examination clock is already running. Leaving this page does not pause it.
+                {state.sitting.timingMode === 'individual'
+                  ? 'Your timer starts only when you click Begin examination. Once started, it continues if you leave or disconnect.'
+                  : 'The examination clock is already running. Leaving this page does not pause it.'}
               </li>
               <li>Your answers save as you go. Check the save status before closing this page.</li>
               <li>If your connection drops, keep this device open while it reconnects.</li>
               <li>Once submitted, your answers cannot be changed.</li>
             </ul>
           </section>
+          {state.sitting.timingMode === 'individual' && (
+            <div className="panel padded candidate-availability">
+              <dl className="summary-list">
+                <div>
+                  <dt>Open from</dt>
+                  <dd>{new Date(state.sitting.opensAt!).toLocaleString()}</dd>
+                </div>
+                <div>
+                  <dt>Start before</dt>
+                  <dd>{new Date(state.sitting.lastStartAt!).toLocaleString()}</dd>
+                </div>
+                {state.sitting.finishBy && (
+                  <div>
+                    <dt>Finish by</dt>
+                    <dd>{new Date(state.sitting.finishBy).toLocaleString()}</dd>
+                  </div>
+                )}
+              </dl>
+              {state.sitting.canStart &&
+                remaining < state.sitting.durationMinutes * 60000 - 1000 && (
+                  <p className="timing-shortening-warning" role="status">
+                    The finish-by deadline leaves {formatTime(remaining)} if you begin now, rather
+                    than the full {state.sitting.durationMinutes} minutes.
+                  </p>
+                )}
+            </div>
+          )}
+          {state.sitting.startRestriction && (
+            <Notice kind="info">
+              {state.sitting.startRestriction === 'not_open'
+                ? `This examination opens on ${new Date(state.sitting.opensAt!).toLocaleString()}. Your timer has not started.`
+                : 'The start window has closed. You can no longer begin this examination.'}
+            </Notice>
+          )}
           {error && <Notice>{error}</Notice>}
-          <button className="button primary" disabled={busy || remaining <= 0} onClick={start}>
-            {remaining <= 0
-              ? 'This examination has ended'
-              : busy
-                ? 'Starting…'
-                : 'Begin examination'}
+          <button
+            className="button primary"
+            disabled={busy || remaining <= 0 || state.sitting.canStart === false}
+            onClick={start}
+          >
+            {state.sitting.startRestriction === 'not_open'
+              ? 'Not open yet'
+              : paused
+                ? 'Examination paused'
+                : state.sitting.canStart === false
+                  ? 'Starting is closed'
+                  : remaining <= 0
+                    ? 'This examination has ended'
+                    : busy
+                      ? 'Starting…'
+                      : 'Begin examination'}
             <Icon name="arrow" size={17} />
           </button>
         </main>
@@ -427,7 +563,7 @@ export function Candidate({
                 </p>
               </div>
               <div className={`exam-timer ${remaining < 60000 ? 'urgent' : ''}`}>
-                <span>Time remaining</span>
+                <span>{paused ? 'Paused · time remaining' : 'Time remaining'}</span>
                 <strong>
                   <Icon name="clock" size={20} />
                   {formatTime(remaining)}
@@ -445,6 +581,7 @@ export function Candidate({
                 ready={queueReady}
                 expired={remaining <= 0}
                 busy={busy}
+                paused={paused}
                 error={error}
                 saveError={queueError}
                 onBack={() => setConfirm(false)}
@@ -482,7 +619,7 @@ export function Candidate({
                       maxLength={10000}
                       aria-label="Your answer"
                       value={String(answerFor(currentQuestion.id) ?? '')}
-                      disabled={!queueReady || busy || remaining <= 0}
+                      disabled={!queueReady || busy || remaining <= 0 || paused}
                       onChange={(e) => {
                         void choose(currentQuestion.id, e.target.value);
                       }}
@@ -502,7 +639,7 @@ export function Candidate({
                               type={currentQuestion.type === 'single' ? 'radio' : 'checkbox'}
                               name={currentQuestion.id}
                               checked={values.includes(option.id)}
-                              disabled={!queueReady || busy || remaining <= 0}
+                              disabled={!queueReady || busy || remaining <= 0 || paused}
                               onChange={(e) => {
                                 void choose(
                                   currentQuestion.id,
@@ -545,16 +682,27 @@ export function Candidate({
                       )}
                     </span>
                     <button
-                      className="button secondary"
-                      disabled={index === attempt.questions.length - 1}
-                      onClick={() => setIndex(index + 1)}
+                      className={`button ${index === attempt.questions.length - 1 ? 'primary' : 'secondary'}`}
+                      disabled={busy || remaining <= 0 || paused}
+                      onClick={() =>
+                        index === attempt.questions.length - 1
+                          ? setConfirm(true)
+                          : setIndex(index + 1)
+                      }
                     >
-                      Next
+                      {index === attempt.questions.length - 1 ? 'Review & submit' : 'Next'}
                       <Icon name="arrow" size={16} />
                     </button>
                   </div>
                   {queueError && (
-                    <Notice kind={queue.current?.error instanceof ApiError ? 'error' : 'info'}>
+                    <Notice
+                      kind={
+                        queue.current?.error instanceof ApiError &&
+                        queue.current.error.code !== 'EXAM_PAUSED'
+                          ? 'error'
+                          : 'info'
+                      }
+                    >
                       {queueError}
                     </Notice>
                   )}
@@ -598,14 +746,6 @@ export function Candidate({
                       Answered
                     </span>
                   </div>
-                  <button
-                    className="button primary full"
-                    onClick={() => setConfirm(true)}
-                    disabled={busy || remaining <= 0}
-                  >
-                    Review & submit
-                  </button>
-                  <p className="field-hint">Review your answers before you submit.</p>
                 </aside>
               </div>
             )}

@@ -1,4 +1,5 @@
 import { DomainError } from './model.ts';
+import { parseTiming } from './timing.ts';
 import type {
   Answer,
   Assessment,
@@ -102,6 +103,8 @@ export function parseAssessment(
     if (typeof input[key] !== 'boolean')
       throw new DomainError('Randomization settings must be true or false.');
   }
+  if (input.allowLateAdmission !== undefined && typeof input.allowLateAdmission !== 'boolean')
+    throw new DomainError('Late admission must be enabled or disabled.');
   return {
     assessment: {
       id: newId(),
@@ -113,6 +116,8 @@ export function parseAssessment(
       shuffleQuestions: input.shuffleQuestions as boolean,
       shuffleOptions: input.shuffleOptions as boolean,
       questions,
+      timing: parseTiming(input.timing),
+      allowLateAdmission: input.allowLateAdmission === true,
     },
     candidates,
   };

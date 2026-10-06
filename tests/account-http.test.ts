@@ -138,7 +138,13 @@ test('account registration, lecturer approval, multi-exam dashboard, and secure 
   assert.equal((await student(join)).value.registration.status, 'approved');
   assert.equal((await student(`/candidate/examinations/${id}/state`)).status, 409);
   assert.equal((await admin(`/assessments/${id}/launch`, 'POST', {})).status, 200);
+  assert.equal((await student(`/candidate/examinations/${id}/heartbeat`, 'POST', {})).status, 200);
+  assert.equal((await student(`/assessments/${id}/monitor`)).status, 403);
   const started = await student(`/candidate/examinations/${id}/start`, 'POST', {});
+  const monitored = await admin(`/assessments/${id}/monitor`);
+  assert.equal(monitored.status, 200);
+  assert.equal(monitored.value.candidates[0].status, 'active');
+  assert.doesNotMatch(JSON.stringify(monitored.value), /password_hash|correctOptionIds|prompt/);
   assert.equal(started.status, 200);
   assert.doesNotMatch(JSON.stringify(started.value), /correctOptionIds/);
   const question = started.value.attempt.questions[0];
@@ -190,6 +196,7 @@ test('account registration, lecturer approval, multi-exam dashboard, and secure 
     201,
   );
   assert.equal((await outsider(`/candidate/examinations/${id}/state`)).status, 403);
+  assert.equal((await outsider(`/candidate/examinations/${id}/heartbeat`, 'POST', {})).status, 403);
   assert.equal((await outsider(`/candidate/examinations/${id}/submit`, 'POST', {})).status, 403);
   assert.equal((await outsider('/candidate/examinations')).value.examinations.length, 0);
   const newDevice = client();

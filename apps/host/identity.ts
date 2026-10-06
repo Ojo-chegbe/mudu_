@@ -11,6 +11,8 @@ import type {
 import { transaction } from './database.ts';
 import { ExamStore } from './store.ts';
 import { token } from './security.ts';
+import { admissionWindow } from '../../packages/exam-core/timing.ts';
+import { execution } from './exam-controls.ts';
 
 export function emailAddress(value: unknown) {
   const email = text(value, 'Email address', 254).toLowerCase();
@@ -21,12 +23,12 @@ export function emailAddress(value: unknown) {
 export function accountPassword(value: unknown, creating = false) {
   if (
     typeof value !== 'string' ||
-    value.length < (creating ? 15 : 1) ||
+    value.length < (creating ? 8 : 1) ||
     value.length > 128 ||
     (creating && !value.trim())
   ) {
     throw new DomainError(
-      creating ? 'Choose a password or passphrase of 15–128 characters.' : 'Enter your password.',
+      creating ? 'Choose a password or passphrase of 8–128 characters.' : 'Enter your password.',
     );
   }
   // Passwords are exact secrets: never trim, normalize, or change their casing.
@@ -378,13 +380,15 @@ export class IdentityService {
       )
       .all(assessmentId) as unknown as RegistrationRequest[];
   }
-  directory(includeUnassigned = false) {
+  directory(includeUnassigned = false, owner?: string) {
     return this.db
       .prepare(
         `SELECT a.id AS accountId,a.email,a.name,m.identifier FROM memberships m JOIN accounts a ON a.id=m.account_id
-      WHERE m.organization_id='default' AND (? OR m.status='verified') ORDER BY a.name`,
+      WHERE m.organization_id='default' AND (? OR m.status='verified') AND (? IS NULL OR
+        EXISTS (SELECT 1 FROM registrations r JOIN assessment_owners o ON o.assessment_id=r.assessment_id WHERE r.account_id=a.id AND o.owner_id=?) OR
+        EXISTS (SELECT 1 FROM roster_members m2 JOIN rosters r2 ON r2.id=m2.roster_id WHERE m2.account_id=a.id AND r2.owner_id=?)) ORDER BY a.name`,
       )
-      .all(Number(includeUnassigned));
+      .all(Number(includeUnassigned), owner ?? null, owner ?? null, owner ?? null);
   }
   examinations(accountId: string): ExamRegistration[] {
     this.store.reconcile();
@@ -394,27 +398,44 @@ export class IdentityService {
     return rows.map((r) => {
       const assessment = this.store.assessment(String(r.assessment_id));
       const sitting = this.db
-        .prepare('SELECT id,deadline FROM sittings WHERE assessment_id=?')
+        .prepare('SELECT id,deadline,started_at,snapshot FROM sittings WHERE assessment_id=?')
         .get(assessment.id);
       const attempt =
         sitting && r.candidate_id
           ? this.store.findAttempt(String(sitting.id), String(r.candidate_id))
           : null;
+      const control = sitting
+        ? execution(this.db, this.store.sitting(String(sitting.id)), this.store.now())
+        : null;
+      const window = sitting
+        ? admissionWindow(
+            control!.assessment,
+            Number(sitting.started_at),
+            control!.admissionDeadline,
+            control!.now,
+          )
+        : null;
       return {
         assessmentId: assessment.id,
         applicationNumber: this.applicationNumber(String(r.id)),
         title: assessment.title,
         course: assessment.course,
-        durationMinutes: assessment.durationMinutes,
+        durationMinutes: control?.assessment.durationMinutes ?? assessment.durationMinutes,
         questionCount: assessment.questions.length,
+        timingMode: assessment.timing?.mode ?? 'shared',
+        opensAt: window?.opensAt ?? assessment.timing?.opensAt ?? null,
+        lastStartAt: window?.lastStartAt ?? assessment.timing?.lastStartAt ?? null,
+        finishBy: control?.assessment.timing?.finishBy ?? assessment.timing?.finishBy ?? null,
         registrationStatus: r.status as ExamRegistration['registrationStatus'],
         examStatus:
           attempt?.status ??
           (!sitting
             ? 'upcoming'
-            : Number(sitting.deadline) <= this.store.now()
+            : window?.startRestriction === 'closed'
               ? 'ended'
-              : 'available'),
+              : window?.startRestriction === 'not_open'
+                ? 'upcoming'
+                : 'available'),
       };
     });
   }

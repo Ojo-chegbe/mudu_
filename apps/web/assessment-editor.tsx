@@ -9,6 +9,9 @@ import { browserId } from './browser-id.ts';
 import { Dialog, Icon, Loading, Notice } from './ui.tsx';
 import type { RosterSummary } from '../../packages/contracts/rosters.ts';
 import { QuestionBankPicker } from './question-bank.tsx';
+import { AssessmentGenerate } from './assessment-generate.tsx';
+import { AuthoringSaveStatus } from './authoring.tsx';
+import { TimingFields, LateAdmissionField } from './timing-fields.tsx';
 
 function validDraft(value: unknown): value is AssessmentEdit {
   if (!value || typeof value !== 'object') return false;
@@ -40,6 +43,7 @@ function validDraft(value: unknown): value is AssessmentEdit {
 
 export function AssessmentEditor({ id }: { id: string }) {
   const [bankOpen, setBankOpen] = useState(false);
+  const [generateOpen, setGenerateOpen] = useState(false);
   const key = `mudu.assessment-edit.${id}`;
   const [saved, setSaved] = useState<AssessmentEdit | null>(null);
   const [draft, setDraft] = useState<AssessmentEdit | null>(null);
@@ -130,6 +134,7 @@ export function AssessmentEditor({ id }: { id: string }) {
         </div>
       </div>
       {error && <Notice>{error}</Notice>}
+      <AuthoringSaveStatus id={id} dirty={dirty} onResolved={() => location.reload()} />
       {storageError && (
         <Notice>Draft backup is unavailable. Keep this tab open until you save.</Notice>
       )}
@@ -241,16 +246,37 @@ export function AssessmentEditor({ id }: { id: string }) {
               Shuffle answer options
             </label>
           </section>
+          <section className="panel padded">
+            <TimingFields
+              value={input.timing}
+              duration={input.durationMinutes}
+              onChange={(timing) => update({ timing })}
+            />
+            <LateAdmissionField
+              enabled={input.allowLateAdmission ?? false}
+              onChange={(allowLateAdmission) => update({ allowLateAdmission })}
+            />
+          </section>
           <div className="section-heading">
             <h2>Questions ({input.questions.length})</h2>
-            <button
-              type="button"
-              className="button secondary"
-              disabled={input.questions.length >= 200}
-              onClick={() => setBankOpen(true)}
-            >
-              Add from question bank
-            </button>
+            <div className="actions assessment-question-actions">
+              <button
+                type="button"
+                className="button secondary"
+                disabled={input.questions.length >= 200}
+                onClick={() => setBankOpen(true)}
+              >
+                Add from question bank
+              </button>
+              <button
+                type="button"
+                className="button secondary"
+                disabled={input.questions.length >= 200}
+                onClick={() => setGenerateOpen(true)}
+              >
+                <Icon name="sparkles" size={16} /> Generate with AI
+              </button>
+            </div>
           </div>
           {input.questions.map((q, index) => (
             <section className="panel padded editor-question" key={index}>
@@ -427,6 +453,13 @@ export function AssessmentEditor({ id }: { id: string }) {
           </div>
         </fieldset>
       </form>
+      {generateOpen && (
+        <AssessmentGenerate
+          remaining={200 - input.questions.length}
+          onClose={() => setGenerateOpen(false)}
+          onAdd={(questions) => update({ questions: [...input.questions, ...questions] })}
+        />
+      )}
       {bankOpen && (
         <QuestionBankPicker
           remaining={200 - input.questions.length}

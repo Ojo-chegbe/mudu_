@@ -7,6 +7,7 @@ export function SubmissionReview({
   ready,
   expired,
   busy,
+  paused = false,
   error,
   saveError,
   onBack,
@@ -18,6 +19,7 @@ export function SubmissionReview({
   ready: boolean;
   expired: boolean;
   busy: boolean;
+  paused?: boolean;
   error: string;
   saveError: string;
   onBack: () => void;
@@ -39,7 +41,9 @@ export function SubmissionReview({
             Review before submitting
           </h2>
           <p className="muted small">
-            Check your progress. The examination timer is still running.
+            {paused
+              ? 'The examination is paused. Your timer is frozen.'
+              : 'Check your progress. The examination timer is still running.'}
           </p>
         </div>
         <button type="button" className="button secondary" disabled={busy} onClick={onBack}>
@@ -121,10 +125,10 @@ export function SubmissionReview({
         <button
           type="button"
           className="button primary"
-          disabled={busy || !ready || pending > 0 || expired}
+          disabled={busy || paused || !ready || pending > 0 || expired}
           onClick={onSubmit}
         >
-          {busy ? 'Submitting…' : 'Confirm submission'}
+          {paused ? 'Examination paused' : busy ? 'Submitting…' : 'Confirm submission'}
           <Icon name="check" size={16} />
         </button>
       </div>

@@ -1,11 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
 import { browserId } from './browser-id.ts';
 import { QuestionBankPicker } from './question-bank.tsx';
+import { AssessmentGenerate } from './assessment-generate.tsx';
+import { TimingFields, TimingSummary, LateAdmissionField } from './timing-fields.tsx';
+import { parseTiming, sharedTiming } from '../../packages/exam-core/timing.ts';
+import type { TimingSettings } from '../../packages/exam-core/model.ts';
 import type { CandidateInput, QuestionType } from '../../packages/exam-core/model.ts';
 import { parseAssessment } from '../../packages/exam-core/engine.ts';
 import { parseCsv, writeCsv } from '../../packages/exam-core/csv.ts';
 import { api, download, errorMessage } from './api.ts';
-import { Dialog, Icon, Notice, PasswordInput } from './ui.tsx';
+import { Dialog, Icon, Loading, Notice, PasswordInput } from './ui.tsx';
+import { AuthoringSaveStatus, useWizardSave } from './authoring.tsx';
+import type { SavedWizard } from '../../packages/contracts/cloud-authoring.ts';
 import { draftKey, readDraft, writeDraft } from './assessment-draft.ts';
 import { RegistrationAdmin } from './registration-admin.tsx';
 import type { RosterSummary, RosterDetail } from '../../packages/contracts/rosters.ts';
@@ -44,6 +50,8 @@ interface Draft {
     passPercent: number;
     shuffleQuestions: boolean;
     shuffleOptions: boolean;
+    timing?: TimingSettings;
+    allowLateAdmission?: boolean;
   };
   questions: QuestionDraft[];
   candidates: CandidateInput[];
@@ -104,10 +112,119 @@ function isDraft(value: unknown): value is Draft {
 }
 
 export function CreateAssessment() {
+  const id = new URLSearchParams(location.search).get('draft');
+  const [loaded, setLoaded] = useState<{
+    draft: Draft | null;
+    revision: number;
+    conflict: boolean;
+  } | null>(() => {
+    if (id) return null;
+    try {
+      const local = readDraft(sessionStorage, isDraft);
+      return {
+        draft: local,
+        revision: local
+          ? Number(sessionStorage.getItem(`mudu.authoring-revision.${local.requestId}`) ?? 0)
+          : 0,
+        conflict: false,
+      };
+    } catch {
+      return { draft: null, revision: 0, conflict: false };
+    }
+  });
+  const [error, setError] = useState('');
+  useEffect(() => {
+    if (!id) return;
+    let alive = true;
+    void api<SavedWizard | { createdId: string }>(`/authoring/${id}`)
+      .then((value) => {
+        if (!alive) return;
+        if ('createdId' in value) {
+          location.replace(`/assessments/${value.createdId}`);
+          return;
+        }
+        let local: Draft | null = null,
+          version = 0;
+        try {
+          local = readDraft(sessionStorage, isDraft);
+          version = Number(sessionStorage.getItem(`mudu.authoring-revision.${id}`) ?? 0);
+        } catch {
+          /* Cloud draft can still load. */
+        }
+        const matching = local?.requestId === id && !local.createdId;
+        if (!matching)
+          try {
+            sessionStorage.setItem(`mudu.authoring-revision.${id}`, String(value.revision));
+          } catch {
+            /* Cloud draft remains saved. */
+          }
+        setLoaded({
+          draft: matching ? local : value.draft,
+          revision: matching ? version : value.revision,
+          conflict: Boolean(matching && version !== value.revision),
+        });
+      })
+      .catch((e) => {
+        if (!alive) return;
+        try {
+          const local = readDraft(sessionStorage, isDraft);
+          if (local?.requestId === id) {
+            setLoaded({
+              draft: local,
+              revision: Number(sessionStorage.getItem(`mudu.authoring-revision.${id}`) ?? 0),
+              conflict: false,
+            });
+            return;
+          }
+        } catch {
+          /* Show the retry path. */
+        }
+        setError(errorMessage(e));
+      });
+    return () => {
+      alive = false;
+    };
+  }, [id]);
+  if (!loaded)
+    return (
+      <>
+        {error ? (
+          <>
+            <Notice>{error}</Notice>
+            <div className="actions">
+              <button className="button secondary" onClick={() => location.reload()}>
+                Try again
+              </button>
+              <a href="/">Back to assessments</a>
+            </div>
+          </>
+        ) : (
+          <Loading />
+        )}
+      </>
+    );
+  return (
+    <AssessmentCreation
+      initial={loaded.draft}
+      initialRevision={loaded.revision}
+      initialConflict={loaded.conflict}
+    />
+  );
+}
+function AssessmentCreation({
+  initial,
+  initialRevision,
+  initialConflict,
+}: {
+  initial: Draft | null;
+  initialRevision: number;
+  initialConflict: boolean;
+}) {
   const [bankOpen, setBankOpen] = useState(false);
+  const [generateOpen, setGenerateOpen] = useState(false);
   const [recovery] = useState(() => {
     try {
-      return { draft: readDraft(sessionStorage, isDraft), error: '' };
+      return { draft: initial ?? readDraft(sessionStorage, isDraft), error: '' };
     } catch {
       return {
         draft: null,
@@ -184,7 +301,7 @@ export function CreateAssessment() {
       }
     }
   }, [step, useRoster, legacyVisible]);
-  const [details, setDetails] = useState(
+  const [details, setDetails] = useState<Draft['details']>(
     restored?.details ?? {
       title: '',
       course: '',
@@ -193,6 +310,8 @@ export function CreateAssessment() {
       passPercent: 50,
       shuffleQuestions: true,
       shuffleOptions: true,
+      timing: sharedTiming(),
+      allowLateAdmission: false,
     },
   );
   const [questions, setQuestions] = useState<QuestionDraft[]>(restored?.questions ?? [question()]);
@@ -229,6 +348,7 @@ export function CreateAssessment() {
     createdId,
   };
   const serialized = JSON.stringify(draft);
+  const authoring = useWizardSave(draft, initialRevision, initialConflict);
   useEffect(() => {
     try {
       draftSaved.current = writeDraft(sessionStorage, JSON.parse(serialized));
@@ -273,6 +393,14 @@ export function CreateAssessment() {
   }
   function next() {
     setError('');
+    if (step === 0) {
+      try {
+        parseTiming(details.timing);
+      } catch (error) {
+        setError(error instanceof Error ? error.message : 'Check the timing settings.');
+        return;
+      }
+    }
     if (step === 2) {
       try {
         if (!useRoster && !legacyVisible)
@@ -331,9 +459,14 @@ export function CreateAssessment() {
     setBusy(true);
     setError('');
     try {
+      if (accessMode === 'accounts') await authoring.save();
       const result = await api<{ id: string; recovered?: boolean }>('/assessments', {
         method: 'POST',
-        body: { ...payload, creationRequestId: requestId },
+        body: {
+          ...payload,
+          creationRequestId: requestId,
+          ...(accessMode === 'accounts' ? { authoringRevision: authoring.revision.current } : {}),
+        },
       });
       saved.current = true;
       setRecoveredSave(Boolean(result.recovered));
@@ -373,7 +506,7 @@ export function CreateAssessment() {
             onClick={() => {
               try {
                 sessionStorage.removeItem(draftKey);
-                location.reload();
+                location.href = '/assessments/new';
               } catch {
                 setDraftError(
                   'Could not clear this tab’s draft. Open a new tab to create another assessment.',
@@ -419,13 +552,21 @@ export function CreateAssessment() {
         ) : (
           <span className="muted small" role="status">
             <Icon name="check" size={14} />{' '}
-            {restored ? 'Draft restored · saved in this tab' : 'Draft saved in this tab'}
+            {authoring.saving
+              ? 'Saving draft…'
+              : authoring.saved
+                ? 'Draft saved to your workspace'
+                : restored
+                  ? 'Draft restored · saved in this tab'
+                  : 'Draft saved in this tab'}
           </span>
         )}
         <details className="draft-options">
           <summary>Draft options</summary>
           <p className="field-hint">
-            Refresh safely in this tab. Closing the tab or signing out clears the draft.
+            {accessMode === 'accounts'
+              ? 'Saved workspace drafts can be reopened from Continue drafting. Cloud-saved drafts are available on your other connected devices.'
+              : 'Individual access-key drafts stay in this tab only.'}
           </p>
           <button
             type="button"
@@ -437,6 +578,70 @@ export function CreateAssessment() {
           </button>
         </details>
       </div>
+      {accessMode === 'accounts' && (
+        <>
+          <AuthoringSaveStatus
+            id={requestId}
+            dirty={authoring.dirty}
+            onResolved={() => {
+              try {
+                sessionStorage.removeItem(draftKey);
+                sessionStorage.removeItem(`mudu.authoring-revision.${requestId}`);
+              } catch {
+                /* Load saved copy. */
+              }
+              location.reload();
+            }}
+          />
+          {authoring.message && (
+            <Notice>
+              {authoring.message}
+              {authoring.conflict && (
+                <div className="actions">
+                  <button
+                    type="button"
+                    className="text-button"
+                    onClick={() => {
+                      const link = document.createElement('a');
+                      link.href = URL.createObjectURL(
+                        new Blob([serialized], { type: 'application/json' }),
+                      );
+                      link.download = 'assessment-tab-draft.json';
+                      link.click();
+                      setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+                    }}
+                  >
+                    Download tab changes
+                  </button>
+                  <button
+                    type="button"
+                    className="text-button"
+                    onClick={() => {
+                      try {
+                        sessionStorage.removeItem(draftKey);
+                        sessionStorage.removeItem(`mudu.authoring-revision.${requestId}`);
+                      } catch {
+                        /* Load saved draft. */
+                      }
+                      location.reload();
+                    }}
+                  >
+                    Reopen saved draft
+                  </button>
+                </div>
+              )}
+            </Notice>
+          )}
+          <button
+            type="button"
+            className="text-button authoring-save"
+            disabled={busy || authoring.saving || authoring.conflict}
+            onClick={() => void authoring.save().catch(() => {})}
+          >
+            Save draft
+          </button>
+        </>
+      )}
       {pendingRoster && (
         <Dialog
           title="Use this roster for the assessment?"
@@ -458,22 +663,25 @@ export function CreateAssessment() {
         <Dialog
           title="Discard this draft?"
           confirmLabel="Discard draft"
-          busy={false}
+          busy={busy}
           onClose={() => setDiscard(false)}
-          confirm={() => {
+          confirm={async () => {
+            setBusy(true);
             try {
+              await authoring.discard();
               sessionStorage.removeItem(draftKey);
               saved.current = true;
-              location.reload();
+              location.href = '/assessments/new';
             } catch {
               setDraftError('Could not discard the draft. Your work has been kept.');
               setDiscard(false);
+              setBusy(false);
             }
           }}
         >
           <p>
-            This clears the questions, roster, and settings saved in this tab. It cannot be undone.
-            An assessment already saved on the server will not be deleted.
+            This discards the unfinished draft from this workspace and its connected devices. It
+            cannot be undone. An assessment already saved on the server will not be deleted.
           </p>
         </Dialog>
       )}
@@ -540,6 +748,15 @@ export function CreateAssessment() {
                   />
                 </label>
               </div>
+              <TimingFields
+                value={details.timing}
+                duration={details.durationMinutes}
+                onChange={(timing) => setDetails({ ...details, timing })}
+              />
+              <LateAdmissionField
+                enabled={details.allowLateAdmission ?? false}
+                onChange={(allowLateAdmission) => setDetails({ ...details, allowLateAdmission })}
+              />
               <label>
                 Candidate instructions <span className="optional">Optional</span>
                 <textarea
@@ -585,14 +802,24 @@ export function CreateAssessment() {
                     Write questions below or reuse approved questions from your bank.
                   </p>
                 </div>
-                <button
-                  type="button"
-                  className="button secondary"
-                  disabled={questions.length >= 200}
-                  onClick={() => setBankOpen(true)}
-                >
-                  Add from question bank
-                </button>
+                <div className="actions assessment-question-actions">
+                  <button
+                    type="button"
+                    className="button secondary"
+                    disabled={questions.length >= 200}
+                    onClick={() => setBankOpen(true)}
+                  >
+                    Add from question bank
+                  </button>
+                  <button
+                    type="button"
+                    className="button secondary"
+                    disabled={questions.length >= 200}
+                    onClick={() => setGenerateOpen(true)}
+                  >
+                    <Icon name="sparkles" size={16} /> Generate with AI
+                  </button>
+                </div>
               </div>
               {questions.map((q, index) => (
                 <section key={index} className="panel padded">
@@ -796,7 +1023,7 @@ export function CreateAssessment() {
                       </div>
                       <p className="field-hint">
                         {candidates.length
-                          ? 'Only these approved members will be assigned. Later roster changes won’t alter this exam automatically.'
+                          ? 'Approved members are assigned automatically. Members approved later also receive this assessment, subject to its admission settings.'
                           : 'Approve at least one member in Rosters, then refresh here to continue.'}
                         {Boolean(rosters.find((r) => r.id === roster.id)?.pending) &&
                           ` ${rosters.find((r) => r.id === roster.id)?.pending} awaiting approval—not included.`}
@@ -1061,12 +1288,19 @@ export function CreateAssessment() {
                 <span className="eyebrow">ASSESSMENT SUMMARY</span>
                 <h2>{details.title}</h2>
                 {useRoster && roster && (
-                  <p className="muted">
-                    Roster: {roster.name} · version {roster.revision}
-                  </p>
+                  <p className="muted">Roster: {roster.name} · membership stays connected</p>
                 )}
                 <p className="muted">{details.course}</p>
                 <dl className="summary-list">
+                  <TimingSummary timing={details.timing} duration={details.durationMinutes} />
+                  <div>
+                    <dt>Late admission</dt>
+                    <dd>
+                      {details.allowLateAdmission
+                        ? 'Allowed while admission is open'
+                        : 'New members only before opening'}
+                    </dd>
+                  </div>
                   <div>
                     <dt>Questions</dt>
                     <dd>{questions.length}</dd>
@@ -1097,8 +1331,9 @@ export function CreateAssessment() {
                   </div>
                 </dl>
                 <p className="field-hint">
-                  Creating the assessment does not start its timer. You will launch it when everyone
-                  is ready.
+                  {details.timing?.mode === 'individual'
+                    ? 'Creating does not open the assessment. Publish it from the overview; each candidate’s timer starts only when they begin.'
+                    : 'Creating the assessment does not start its timer. You will launch it when everyone is ready.'}
                 </p>
               </section>
               {accessMode === 'legacy' ? (
@@ -1172,7 +1407,7 @@ export function CreateAssessment() {
                   </dl>
                   <p className="field-hint">
                     {useRoster
-                      ? 'This assessment keeps its own candidate snapshot. Editing the reusable roster never removes past results.'
+                      ? 'New approved members receive this assessment according to its admission settings. Existing attempts and results are preserved.'
                       : 'No access-key spreadsheet to distribute. A shared link never bypasses eligibility checks.'}
                   </p>
                 </section>
@@ -1219,6 +1454,28 @@ export function CreateAssessment() {
           </div>
         </fieldset>
       </form>
+      {generateOpen && (
+        <AssessmentGenerate
+          remaining={
+            200 -
+            (questions.length === 1 &&
+            !questions[0].prompt.trim() &&
+            questions[0].options.every((o) => !o.trim())
+              ? 0
+              : questions.length)
+          }
+          onClose={() => setGenerateOpen(false)}
+          onAdd={(items) =>
+            setQuestions((current) =>
+              current.length === 1 &&
+              !current[0].prompt.trim() &&
+              current[0].options.every((o) => !o.trim())
+                ? items
+                : [...current, ...items],
+            )
+          }
+        />
+      )}
       {bankOpen && (
         <QuestionBankPicker
           remaining={

@@ -7,7 +7,7 @@ import { IdentityService } from '../apps/host/identity.ts';
 import { Rosters } from '../apps/host/rosters.ts';
 import { assessment } from './fixtures.ts';
 
-test('roster membership requires approval and verified ownership; snapshots remain independent', (t) => {
+test('approved roster additions are admitted automatically while existing attempts and enrolments remain independent', (t) => {
   const db = openDatabase(':memory:');
   t.after(() => db.close());
   const store = new ExamStore(db, () => 1000000);
@@ -64,9 +64,10 @@ test('roster membership requires approval and verified ownership; snapshots rema
   assert.equal(identity.examinations(a).length, 1);
   rosters.join(roster.token, b);
   rosters.review(id, 'admin', b, { decision: 'approved', identityVerified: true });
-  assert.equal(store.detail(exam.id).candidates.length, 1);
+  assert.equal(store.detail(exam.id).candidates.length, 2);
+  assert.equal(identity.examinations(b).length, 1);
   const additions = rosters.additions(exam.id, 'admin');
-  assert.equal(additions.additions.length, 1);
+  assert.equal(additions.additions.length, 0);
   assert.throws(() => rosters.additions(exam.id, 'admin', true, 2), /changed/);
   rosters.additions(exam.id, 'admin', true, additions.currentRevision);
   assert.equal(identity.examinations(b).length, 1);
@@ -77,7 +78,7 @@ test('roster membership requires approval and verified ownership; snapshots rema
   store.launch(exam.id, 'admin');
   assert.throws(
     () => rosters.additions(exam.id, 'admin', true, rosters.get(id, 'admin').revision),
-    /before/,
+    /Admission is closed/,
   );
   const latest = rosters.get(id, 'admin');
   rosters.save(id, 'admin', { ...input, revision: latest.revision, archived: true });

@@ -21,6 +21,14 @@ export interface Assessment {
   shuffleQuestions: boolean;
   shuffleOptions: boolean;
   questions: Question[];
+  timing?: TimingSettings;
+  allowLateAdmission?: boolean;
+}
+export interface TimingSettings {
+  mode: 'shared' | 'individual';
+  opensAt: number | null;
+  lastStartAt: number | null;
+  finishBy: number | null;
 }
 export interface CandidateInput {
   identifier: string;
@@ -54,6 +62,8 @@ export interface Grade {
 }
 export type CandidateQuestion = Omit<Question, 'correctOptionIds'>;
 export interface CandidateView {
+  controls?: { revision: number; pausedAt: number | null };
+  announcements?: { id: string; message: string; createdAt: number; read?: boolean }[];
   serverNow: number;
   candidate: { name: string; identifier: string };
   sitting: {
@@ -64,6 +74,12 @@ export interface CandidateView {
     deadline: number;
     questionCount: number;
     durationMinutes: number;
+    timingMode?: 'shared' | 'individual';
+    opensAt?: number;
+    lastStartAt?: number;
+    finishBy?: number | null;
+    canStart?: boolean;
+    startRestriction?: 'not_open' | 'closed' | null;
   };
   attempt:
     | (Omit<Attempt, 'order' | 'candidateId'> & {

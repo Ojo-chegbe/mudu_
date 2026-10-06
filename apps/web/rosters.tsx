@@ -12,6 +12,7 @@ import type {
 import { api, errorMessage } from './api.ts';
 import { parseCsv } from '../../packages/exam-core/csv.ts';
 import { Brand, Dialog, Icon, Loading, Notice } from './ui.tsx';
+import { RosterCloudStatus, rosterCloudUpdated } from './roster-cloud-status.tsx';
 
 export function RostersPage({ id }: { id?: string }) {
   const [rows, setRows] = useState<RosterSummary[] | null>(null);
@@ -22,6 +23,16 @@ export function RostersPage({ id }: { id?: string }) {
       void api<{ rosters: RosterSummary[] }>('/rosters')
         .then((r) => setRows(r.rosters))
         .catch((e) => setError(errorMessage(e)));
+  }, [id]);
+  useEffect(() => {
+    if (id) return;
+    const refresh = () => {
+      void api<{ rosters: RosterSummary[] }>('/rosters')
+        .then((r) => setRows(r.rosters))
+        .catch((e) => setError(errorMessage(e)));
+    };
+    window.addEventListener(rosterCloudUpdated, refresh);
+    return () => window.removeEventListener(rosterCloudUpdated, refresh);
   }, [id]);
   if (id)
     return (
@@ -46,6 +57,7 @@ export function RostersPage({ id }: { id?: string }) {
         )}
       </div>
       {error && <Notice>{error}</Notice>}
+      <RosterCloudStatus />
       {Boolean(rows?.length) && (
         <label className="search roster-search">
           <Icon name="search" size={17} />
@@ -131,7 +143,7 @@ interface RosterDraft {
   entries: RosterEntry[];
 }
 function RosterEditor({ routeId }: { routeId: string }) {
-  const candidateOrigin = useCandidateOrigin();
+  const candidateOrigin = useCandidateOrigin(true);
   const saved = useRef(false);
   const draftKey = `mudu.roster-draft.${routeId}`;
   const [draft, setDraft] = useState<RosterDraft | null>(null);
@@ -226,6 +238,19 @@ function RosterEditor({ routeId }: { routeId: string }) {
     window.addEventListener('beforeunload', prevent);
     return () => window.removeEventListener('beforeunload', prevent);
   }, [dirty, storageError]);
+  useEffect(() => {
+    if (routeId === 'new') return;
+    const refresh = () => {
+      void api<RosterDetail>(`/rosters/${routeId}`)
+        .then((r) => {
+          setData(r);
+          if (!dirty) setDraft(fromServer(r));
+        })
+        .catch((e) => setError(errorMessage(e)));
+    };
+    window.addEventListener(rosterCloudUpdated, refresh);
+    return () => window.removeEventListener(rosterCloudUpdated, refresh);
+  }, [routeId, dirty]);
   function change(patch: Partial<RosterDraft>) {
     saved.current = false;
     setDraft((d) => (d ? { ...d, ...patch } : d));
@@ -282,6 +307,7 @@ function RosterEditor({ routeId }: { routeId: string }) {
         )}
       </div>
       {error && <Notice>{error}</Notice>}
+      {data && <RosterCloudStatus id={data.id} dirty={dirty} />}
       {storageError && (
         <Notice>Draft backup is unavailable. Keep this tab open until you save.</Notice>
       )}
@@ -556,7 +582,7 @@ function RosterEditor({ routeId }: { routeId: string }) {
               disabled={busy || dirty}
               onClick={async () => {
                 try {
-                  const r = await api<RosterDetail>(`/rosters/${data.id}`);
+                  const r = await api<RosterDetail>(`/rosters/${data.id}?refresh=1`);
                   setData(r);
                   setDraft(fromServer(r));
                 } catch (e) {
@@ -748,7 +774,7 @@ function RosterEditor({ routeId }: { routeId: string }) {
             try {
               const r = await api<RosterDetail>(
                 `/rosters/${data.id}/members/${review.member.accountId}`,
-                { method: 'POST', body: { decision: review.decision } },
+                { method: 'POST', body: { decision: review.decision, revision: data.revision } },
               );
               setData(r);
               setDraft(fromServer(r));
@@ -775,6 +801,23 @@ export function RosterJoin({ token, signedIn }: { token: string; signedIn: boole
   const [data, setData] = useState<RosterInvitation | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [number, setNumber] = useState(''),
+    [fixedNumber, setFixedNumber] = useState(false);
+  useEffect(() => {
+    if (!signedIn) return;
+    let alive = true;
+    void api<{ identifier: string }>('/candidate/me')
+      .then((profile) => {
+        if (alive && !profile.identifier.startsWith('ACCOUNT-')) {
+          setNumber(profile.identifier);
+          setFixedNumber(true);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [signedIn]);
   useEffect(() => {
     let active = true;
     const load = () =>
@@ -859,23 +902,44 @@ export function RosterJoin({ token, signedIn }: { token: string; signedIn: boole
             <>
               <p className="muted">Join this group once to receive assessments assigned to you.</p>
               {signedIn ? (
-                <button
-                  className="button primary"
-                  disabled={busy}
-                  onClick={async () => {
-                    setBusy(true);
-                    try {
-                      setData(await api(`/roster-join/${token}`, { method: 'POST', body: {} }));
-                      setError('');
-                    } catch (e) {
-                      setError(errorMessage(e));
-                    } finally {
-                      setBusy(false);
-                    }
-                  }}
-                >
-                  {busy ? 'Sending request…' : 'Request to join group'}
-                </button>
+                <>
+                  {data.restricted && (
+                    <label className="group-join-number">
+                      Student or candidate number
+                      <input
+                        required
+                        maxLength={80}
+                        value={number}
+                        readOnly={fixedNumber}
+                        onChange={(e) => setNumber(e.target.value)}
+                        autoComplete="off"
+                        placeholder="The number on your class list"
+                      />
+                    </label>
+                  )}
+                  <button
+                    className="button primary"
+                    disabled={busy || (data.restricted && !number.trim())}
+                    onClick={async () => {
+                      setBusy(true);
+                      try {
+                        setData(
+                          await api(`/roster-join/${token}`, {
+                            method: 'POST',
+                            body: data.restricted ? { identifier: number } : {},
+                          }),
+                        );
+                        setError('');
+                      } catch (e) {
+                        setError(errorMessage(e));
+                      } finally {
+                        setBusy(false);
+                      }
+                    }}
+                  >
+                    {busy ? 'Sending request…' : 'Request to join group'}
+                  </button>
+                </>
               ) : (
                 <p>Sign in or create your account below, then request to join this group.</p>
               )}
@@ -970,12 +1034,14 @@ export function AssessmentRoster({ id, onChange }: { id: string; onChange: () =>
     revision: number;
     currentRevision: number;
     started: boolean;
+    completed: boolean;
+    canAdmit: boolean;
+    allowLateAdmission: boolean;
+    admittedCount: number;
     additions: Array<{ name: string; identifier: string }>;
   };
   const [data, setData] = useState<Link | null>(null);
   const [error, setError] = useState('');
-  const [confirm, setConfirm] = useState(false);
-  const [busy, setBusy] = useState(false);
   async function load() {
     try {
       setData(await api<Link>(`/assessments/${id}/roster`));
@@ -986,6 +1052,8 @@ export function AssessmentRoster({ id, onChange }: { id: string; onChange: () =>
   }
   useEffect(() => {
     void load();
+    const timer = setInterval(load, 10000);
+    return () => clearInterval(timer);
   }, [id]);
   return (
     <section className="panel padded">
@@ -994,7 +1062,7 @@ export function AssessmentRoster({ id, onChange }: { id: string; onChange: () =>
           <h2>Assessment roster</h2>
           {data && (
             <p className="muted">
-              {data.name} · snapshot version {data.revision}
+              {data.name} · {data.admittedCount} admitted
             </p>
           )}
         </div>
@@ -1006,60 +1074,31 @@ export function AssessmentRoster({ id, onChange }: { id: string; onChange: () =>
       </div>
       {error && <Notice>{error}</Notice>}
       <p className="field-hint">
-        Membership and joining links are managed in Rosters. Existing exam enrolments are preserved
-        when that group changes.
+        {data?.completed
+          ? 'This examination is closed. Existing enrolments and results are preserved.'
+          : data?.canAdmit
+            ? 'New approved members receive this assessment automatically. No separate enrolment is needed.'
+            : data?.allowLateAdmission
+              ? 'The start window has closed. Existing attempts can continue, but no new candidates can begin.'
+              : 'New approved members will not enter this examination while late admission is closed. Existing candidates keep their access.'}
       </p>
-      {data && !data.started && (
-        <div className="actions">
-          <button className="text-button" onClick={load}>
-            Check for new members
-          </button>
-          {data.additions.length > 0 && (
-            <button className="button primary" onClick={() => setConfirm(true)}>
-              Review {data.additions.length} new members
-            </button>
-          )}
-        </div>
-      )}
-      {data?.started && (
+      {data && data.additions.length > 0 && (
         <p className="field-hint">
-          Candidate admission is frozen because this examination has started.
+          {data.additions.length} approved roster member
+          {data.additions.length === 1 ? ' is' : 's are'} not admitted to this assessment. Admission
+          settings and the candidate limit apply.
         </p>
       )}
-      {confirm && data && (
-        <Dialog
-          title="Add these approved members?"
-          confirmLabel="Add to assessment"
-          busy={busy}
-          onClose={() => setConfirm(false)}
-          confirm={async () => {
-            setBusy(true);
-            try {
-              await api(`/assessments/${id}/roster`, {
-                method: 'POST',
-                body: { revision: data.currentRevision },
-              });
-              await load();
-              await onChange();
-              setConfirm(false);
-            } catch (e) {
-              setError(errorMessage(e));
-              setConfirm(false);
-            } finally {
-              setBusy(false);
-            }
-          }}
-        >
-          <ul>
-            {data.additions.map((m) => (
-              <li key={m.identifier}>
-                {m.name} · {m.identifier}
-              </li>
-            ))}
-          </ul>
-          <p>These candidates will see the assessment in their existing accounts.</p>
-        </Dialog>
-      )}
+      <button
+        type="button"
+        className="text-button"
+        onClick={async () => {
+          await load();
+          await onChange();
+        }}
+      >
+        Refresh membership
+      </button>
     </section>
   );
 }

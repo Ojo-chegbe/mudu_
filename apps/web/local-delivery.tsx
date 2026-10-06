@@ -3,13 +3,15 @@ import type { LocalDeliveryStatus } from '../../packages/contracts/local-deliver
 import { api, errorMessage } from './api.ts';
 import { Icon, Loading, Notice, Dialog } from './ui.tsx';
 
-export function useCandidateOrigin() {
+export function useCandidateOrigin(preferPublic = false) {
   const [origin, setOrigin] = useState(location.origin);
   useEffect(() => {
     let alive = true;
     async function refresh() {
       try {
-        const value = await api<{ origin: string | null }>('/candidate-address');
+        const value = await api<{ origin: string | null }>(
+          `/candidate-address${preferPublic ? '?purpose=roster' : ''}`,
+        );
         if (alive) setOrigin(value.origin ?? location.origin);
       } catch {
         /* Existing loopback link stays visibly local if the Host is unreachable. */
@@ -21,7 +23,7 @@ export function useCandidateOrigin() {
       alive = false;
       clearInterval(timer);
     };
-  }, []);
+  }, [preferPublic]);
   return origin;
 }
 
@@ -148,6 +150,10 @@ export function LocalDeliveryPage() {
                 <a className="button secondary" href="/">
                   Go to assessments <Icon name="arrow" size={16} />
                 </a>
+                <p className="field-hint">
+                  For a prepared local run, candidates open their saved examination access file
+                  here. Save the files from their accounts before disconnecting the internet.
+                </p>
               </>
             ) : (
               <>

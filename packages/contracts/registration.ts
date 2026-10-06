@@ -28,6 +28,11 @@ export interface RegistrationRequest {
   rosterName: string | null;
 }
 export interface ExamRegistration {
+  delivery?: 'local' | 'online';
+  timingMode?: 'shared' | 'individual';
+  opensAt?: number | null;
+  lastStartAt?: number | null;
+  finishBy?: number | null;
   applicationNumber: string | null;
   assessmentId: string;
   title: string;

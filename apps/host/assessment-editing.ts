@@ -6,6 +6,8 @@ import { transaction } from './database.ts';
 import { digest, token } from './security.ts';
 import type { ExamStore } from './store.ts';
 import { Rosters } from './rosters.ts';
+import type { Assessment } from '../../packages/exam-core/model.ts';
+type RerunCandidate = { account_id: string; identifier: string; name: string; serial: number };
 
 export class AssessmentEditing {
   store: ExamStore;
@@ -13,6 +15,11 @@ export class AssessmentEditing {
     this.store = store;
   }
   private editable(id: string) {
+    if (this.store.db.prepare('SELECT 1 FROM local_preparations WHERE run_id=?').get(id))
+      throw new DomainError(
+        'This local paper is pinned for delivery. Change the source assessment and prepare a new run instead.',
+        409,
+      );
     const assessment = this.store.assessment(id);
     if (this.store.db.prepare('SELECT 1 FROM sittings WHERE assessment_id=?').get(id))
       throw new DomainError(
@@ -26,6 +33,7 @@ export class AssessmentEditing {
     return { input: assessmentInput(assessment), version: digest(JSON.stringify(assessment)) };
   }
   update(id: string, actor: string, input: Record<string, unknown>) {
+    this.store.assertOwner(id, actor);
     const parsed = parseAssessment(
       { ...input, accessMode: 'accounts', candidates: [] },
       randomUUID,
@@ -49,7 +57,18 @@ export class AssessmentEditing {
       return this.editView(id);
     });
   }
-  rerun(id: string, actor: string, input: Record<string, unknown>) {
+  rerun(
+    id: string,
+    actor: string,
+    input: Record<string, unknown>,
+    completedOnline?: {
+      paper: Assessment;
+      candidates: RerunCandidate[] | (() => RerunCandidate[]);
+    },
+  ) {
+    this.store.assertOwner(id, actor);
+    if (completedOnline && completedOnline.paper.id !== id)
+      throw new DomainError('Assessment not found.', 404);
     const requestId = text(input.requestId, 'Request identifier', 36);
     if (!/^[a-f0-9-]{36}$/.test(requestId)) throw new DomainError('Invalid request identifier.');
     const title = text(input.title, 'Assessment title', 180);
@@ -81,20 +100,24 @@ export class AssessmentEditing {
           throw new DomainError('This request was already used for different settings.', 409);
         return { id: String(previous.assessment_id), recovered: true };
       }
-      const source = this.store.assessment(id);
+      const source = completedOnline?.paper ?? this.store.assessment(id);
       const rosters = new Rosters(this.store);
       const snapshot = rosterId ? rosters.snapshot(rosterId, actor, input.rosterRevision) : null;
       const sitting = db
         .prepare('SELECT id,deadline,snapshot FROM sittings WHERE assessment_id=?')
         .get(id);
       if (
-        !sitting ||
-        Number(sitting.deadline) > this.store.now() ||
-        db
-          .prepare(
-            "SELECT 1 FROM attempts WHERE sitting_id=? AND status='active' AND deadline>? LIMIT 1",
-          )
-          .get(sitting.id!, this.store.now())
+        !completedOnline &&
+        (!sitting ||
+          Number(sitting.deadline) > this.store.now() ||
+          db
+            .prepare('SELECT 1 FROM exam_controls WHERE sitting_id=? AND paused_at IS NOT NULL')
+            .get(sitting.id!) ||
+          db
+            .prepare(
+              "SELECT 1 FROM attempts WHERE sitting_id=? AND status='active' AND deadline>? LIMIT 1",
+            )
+            .get(sitting.id!, this.store.now()))
       )
         throw new DomainError('Finish this assessment before preparing another run.', 409);
       const settings = db
@@ -107,7 +130,10 @@ export class AssessmentEditing {
         );
       const definition = parseAssessment(
         {
-          ...assessmentInput(sitting ? JSON.parse(String(sitting.snapshot)) : source),
+          ...assessmentInput(
+            completedOnline?.paper ?? (sitting ? JSON.parse(String(sitting.snapshot)) : source),
+          ),
+          allowLateAdmission: source.allowLateAdmission ?? false,
           title,
           accessMode: 'accounts',
           candidates: [],
@@ -124,6 +150,7 @@ export class AssessmentEditing {
         requestId,
         definition.id,
       );
+      db.prepare('INSERT INTO assessment_owners VALUES(?,?)').run(definition.id, actor);
       // Every run gets a fresh link, application references and timing state. No answers or keys are copied.
       db.prepare(
         "INSERT INTO registration_settings(assessment_id,mode,policy,link_token,is_open,closes_at,capacity) VALUES(?,'accounts','approval',?,0,NULL,?)",
@@ -163,11 +190,17 @@ export class AssessmentEditing {
         }
       }
       if (input.includeCandidates) {
-        const candidates = db
-          .prepare(
-            "SELECT r.account_id,c.identifier,c.name,n.serial FROM registrations r JOIN candidates c ON c.id=r.candidate_id JOIN application_numbers n ON n.registration_id=r.id WHERE r.assessment_id=? AND r.status='approved' ORDER BY n.serial",
-          )
-          .all(id);
+        const candidates =
+          (completedOnline
+            ? typeof completedOnline.candidates === 'function'
+              ? completedOnline.candidates()
+              : completedOnline.candidates
+            : undefined) ??
+          db
+            .prepare(
+              "SELECT r.account_id,c.identifier,c.name,n.serial FROM registrations r JOIN candidates c ON c.id=r.candidate_id JOIN application_numbers n ON n.registration_id=r.id WHERE r.assessment_id=? AND r.status='approved' ORDER BY n.serial",
+            )
+            .all(id);
         for (const candidate of candidates) {
           const candidateId = randomUUID();
           const registrationId = randomUUID();
