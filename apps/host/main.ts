@@ -88,6 +88,7 @@ let cloudBank: CloudQuestionBank | undefined;
 let cloudRosters: CloudRosters | undefined;
 let cloudAuthoring: import('./cloud-authoring.ts').CloudAuthoring | undefined;
 const handler = await createHandler(db, {
+  hostDownloadUrl: process.env.MUDU_HOST_DOWNLOAD_URL,
   online: onlinePool ? new OnlineExecution(onlinePool) : undefined,
   preparationKey: hostKey,
   cloudPreparation: cloudConfig ? new SupabasePreparationStorage(cloudConfig) : undefined,

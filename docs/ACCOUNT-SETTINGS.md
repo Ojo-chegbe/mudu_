@@ -31,3 +31,7 @@ Confirmed-email verification does not expire. Sessions still expire or can be re
 ## Upgrade
 
 SQLite schema 20 adds per-session connection state and per-account preferences. Migration takes a pre-upgrade snapshot, preserves accounts, credentials and records, and recognizes previously configured offline access. Do not downgrade after migration.
+
+## Website handoff
+
+Connected administrators on the website can choose Enable offline access from the dashboard or Settings. The guide explains installation, opening the app, using the same account, and one-time device-password setup. It makes the website and downloaded-data limitations explicit. Set MUDU_HOST_DOWNLOAD_URL on the website server to the published HTTPS Windows installer URL. Without a configured URL, the guide reports that the download is unavailable instead of showing a broken link. Installation and downloads do not transfer login credentials.

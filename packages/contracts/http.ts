@@ -4,6 +4,7 @@ export interface AuthState {
   connection?: WorkspaceConnectionState;
   preferences?: AccountPreferences;
   deviceAccessAvailable?: boolean;
+  hostDownloadUrl?: string;
   deviceAccessEnabled?: boolean;
   deviceAccessConfigured?: boolean;
   deviceSignedIn?: boolean;

@@ -25,11 +25,77 @@ export function DeviceAccess({
   const [disable, setDisable] = useState(false);
   const form = useRef<HTMLFormElement>(null);
   if (
-    !auth.deviceAccessAvailable ||
-    !auth.cloudConnected ||
+    auth.role !== 'admin' ||
+    (placement === 'onboarding' && !auth.cloudConnected) ||
     (placement === 'onboarding' && (auth.deviceAccessEnabled || auth.deviceAccessConfigured))
   )
     return null;
+  if (!auth.deviceAccessAvailable)
+    return (
+      <>
+        <section className="workspace-connect-prompt" aria-label="Offline access">
+          <div>
+            <strong>Use MUDU without internet</strong>
+            <p>Install MUDU Host on your Windows computer and use your existing account.</p>
+          </div>
+          <button className="button secondary" onClick={() => setOpen(true)}>
+            Enable offline access
+          </button>
+        </section>
+        {open && (
+          <Dialog
+            title="Use MUDU without internet"
+            confirmLabel="Done"
+            confirm={() => setOpen(false)}
+            onClose={() => setOpen(false)}
+          >
+            <ol>
+              <li>Download and install MUDU Host on a trusted Windows 10 or 11 computer.</li>
+              <li>Open MUDU Host from your Start menu or desktop.</li>
+              <li>
+                Sign in with the same MUDU account you use here. You do not need another account.
+              </li>
+              <li>
+                Choose Enable offline access and set a device password. Manage it later in Settings.
+              </li>
+            </ol>
+            <p>Already installed? Open MUDU Host and continue from step 3.</p>
+            <p>
+              Once configured, the app keeps your workspace open when internet is lost. Your device
+              password lets you reopen it offline after signing out.
+            </p>
+            <Notice kind="info">
+              This website needs internet. Only work downloaded or synchronized to that computer is
+              available offline. Prepare local examinations in the app before going offline.
+            </Notice>
+            {auth.hostDownloadUrl ? (
+              <a
+                className="button primary"
+                href={auth.hostDownloadUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Download for Windows
+              </a>
+            ) : (
+              <p role="status">
+                The Windows download is not available yet. Your workspace remains available online.
+              </p>
+            )}
+            <p className="muted">
+              On a phone or another operating system? Complete setup on your Windows computer.
+            </p>
+          </Dialog>
+        )}
+      </>
+    );
+  if (!auth.cloudConnected)
+    return (
+      <Notice kind="info">
+        Your local Host workspace already works without internet. To enable device-password access
+        for an online account, connect that account from your <a href="/">workspace</a> first.
+      </Notice>
+    );
   function close() {
     setOpen(false);
     setError('');

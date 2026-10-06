@@ -235,7 +235,7 @@ function App() {
             className={`nav-item ${path.startsWith('/question-bank') ? 'selected' : ''}`}
             href="/question-bank"
           >
-            <Icon name="paper" />
+            <Icon name="help" />
             Question bank
           </a>
           {auth.hostOperator !== false && (
@@ -252,100 +252,135 @@ function App() {
               className={`nav-item ${path.startsWith('/cloud-sync') ? 'selected' : ''}`}
               href="/cloud-sync"
             >
-              <Icon name="server" />
+              <Icon name="cloud" />
               Cloud sync
             </a>
           )}
-          <a className="nav-item" href="/exam">
-            <Icon name="people" />
-            Candidate access
-            <Icon name="arrow" size={14} />
-          </a>
-          <a className={`nav-item ${path === '/settings' ? 'selected' : ''}`} href="/settings">
+          <a
+            className={`nav-item ${path === '/settings' || path === '/profile' ? 'selected' : ''}`}
+            href="/settings"
+          >
             <Icon name="settings" />
             Settings
           </a>
-          <a className={`nav-item ${path === '/profile' ? 'selected' : ''}`} href="/profile">
-            <Icon name="people" />
-            Profile
+          <a className="nav-item" href="/exam">
+            <Icon name="user" />
+            Candidate access
           </a>
         </nav>
         <div className="sidebar-bottom">
-          <div className={`host-status ${auth.connection?.state === 'offline' ? 'offline' : ''}`}>
-            <span className="status-dot" />
-            <div>
-              <strong>{auth.cloudConnected ? 'MUDU account connected' : 'Your workspace'}</strong>
-              <span>
-                {auth.connection?.state === 'offline'
-                  ? 'Working offline'
-                  : auth.cloudSignedIn
-                    ? 'Signed in online'
-                    : auth.cloudConnected
-                      ? 'Cloud sign-in needed'
-                      : 'Saved on this computer'}
+          <div className="sidebar-account">
+            <a
+              className="account-button"
+              href="/settings"
+              aria-label="Open account settings"
+              title={auth.name ?? 'Account settings'}
+            >
+              <span className="avatar" aria-hidden="true">
+                {(auth.name ?? 'MUDU')
+                  .trim()
+                  .split(/\s+/)
+                  .filter((_, index, words) => index === 0 || index === words.length - 1)
+                  .map((word) => word[0])
+                  .join('')
+                  .slice(0, 2)
+                  .toUpperCase()}
               </span>
+              <span className="sidebar-account-details">
+                <strong>{auth.name ?? 'Your account'}</strong>
+                <small>Administrator</small>
+              </span>
+              <Icon name="settings" size={16} />
+            </a>
+            <div className="sidebar-connection">
+              <span
+                className={`sidebar-connection-status ${auth.connection?.state === 'offline' ? 'offline' : auth.cloudSignedIn ? 'online' : 'local'}`}
+                role="status"
+              >
+                <span className="status-dot" aria-hidden="true" />
+                {auth.connection?.state === 'offline'
+                  ? 'Offline'
+                  : auth.cloudSignedIn
+                    ? 'Online'
+                    : auth.cloudConnected
+                      ? 'Sign-in needed'
+                      : 'Local workspace'}
+              </span>
+              {auth.deviceAccessEnabled && auth.deviceAccessAvailable && (
+                auth.connection?.needsOnlineSignIn ? (
+                  <a className="sidebar-connection-action" href="/settings#offline-access">
+                    Sign in online
+                  </a>
+                ) : (
+                  <button
+                    type="button"
+                    className="sidebar-connection-action"
+                    disabled={modeBusy}
+                    aria-busy={modeBusy}
+                    title={
+                      auth.connection?.state === 'offline'
+                        ? 'Reconnect using your existing account session'
+                        : 'Keep working in this workspace without online services'
+                    }
+                    onClick={() => {
+                      void changeMode(
+                        auth.connection?.state === 'offline' ? 'auto' : 'offline',
+                      ).catch(() => {});
+                    }}
+                  >
+                    {modeBusy
+                      ? 'Updating…'
+                      : auth.connection?.state === 'offline'
+                        ? auth.connection?.mode === 'offline'
+                          ? 'Go online'
+                          : 'Retry connection'
+                        : 'Work offline'}
+                  </button>
+                )
+              )}
             </div>
           </div>
-          {auth.deviceAccessEnabled && (
-            <button
-              type="button"
-              className="text-button"
-              disabled={modeBusy}
-              onClick={() => {
-                void changeMode(auth.connection?.mode === 'offline' ? 'auto' : 'offline').catch(
-                  () => {},
-                );
-              }}
-            >
-              {modeBusy
-                ? 'Updating connection…'
-                : auth.connection?.mode === 'offline'
-                  ? 'Use automatic connection'
-                  : 'Use offline access'}
-            </button>
-          )}
-          <a className="account-button" href="/profile" aria-label="Open your profile">
-            <span className="avatar">{auth.name?.[0]?.toUpperCase() ?? 'M'}</span>
-            <span>
-              {auth.name}
-              <small>Administrator</small>
-            </span>
-            <Icon name="people" size={17} />
-          </a>
         </div>
       </aside>
       <div className="workspace-main">
         <header className="topbar">
           <span>
-            Workspace <span className="slash">/</span> <a href="/">Assessments</a>
-            {path !== '/' && (
+            <a href="/">Workspace</a>
+            <span className="slash">/</span>
+            {path === '/settings' ? (
+              'Settings'
+            ) : path === '/profile' ? (
               <>
+                <a href="/settings">Settings</a>
                 <span className="slash">/</span>
-                <span>
-                  {path === '/settings'
-                    ? 'Settings'
-                    : path === '/profile'
-                      ? 'Profile'
-                      : path.startsWith('/question-bank')
-                        ? 'Question bank'
-                        : path.startsWith('/cloud-sync')
-                          ? 'Cloud sync'
-                          : editId
-                            ? 'Edit assessment'
-                            : path === '/local-delivery'
-                              ? 'Local delivery'
-                              : path.startsWith('/rosters')
-                                ? 'Rosters'
-                                : path === '/assessments/new'
-                                  ? 'Create'
-                                  : ({
-                                      results: 'Results',
-                                      questions: 'Questions',
-                                      activity: 'Activity',
-                                    }[new URLSearchParams(location.search).get('tab') ?? ''] ??
-                                    'Overview')}
-                </span>
+                Profile
               </>
+            ) : path === '/' ? (
+              'Assessments'
+            ) : path.startsWith('/question-bank') ? (
+              'Question bank'
+            ) : path.startsWith('/cloud-sync') ? (
+              'Cloud sync'
+            ) : path === '/local-delivery' ? (
+              'Local delivery'
+            ) : path.startsWith('/rosters') ? (
+              'Rosters'
+            ) : path.startsWith('/assessments/') ? (
+              <>
+                <a href="/">Assessments</a>
+                <span className="slash">/</span>
+                {editId
+                  ? 'Edit assessment'
+                  : path === '/assessments/new'
+                    ? 'Create'
+                    : ({
+                        results: 'Results',
+                        questions: 'Questions',
+                        activity: 'Activity',
+                      }[new URLSearchParams(location.search).get('tab') ?? ''] ?? 'Overview')}
+              </>
+            ) : (
+              'Workspace'
             )}
           </span>
           <div className="actions">
@@ -363,10 +398,6 @@ function App() {
                     : 'Local access'}
               </span>
             )}
-            <span className="topbar-label">
-              <Icon name="server" size={15} />
-              MUDU Host
-            </span>
           </div>
         </header>
         <main className="content">

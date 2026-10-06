@@ -81,20 +81,35 @@ export function Icon({ name, size = 20 }: { name: string; size?: number }) {
         <path d="M12 7v5l3 2" />
       </>
     ),
-    people: (
+      people: (
       <>
         <circle cx="9" cy="8" r="3" />
         <path d="M3 21v-3a6 6 0 0 1 12 0v3M16 5a3 3 0 0 1 0 6m2 4a6 6 0 0 1 3 5" />
       </>
-    ),
-    server: (
+      ),
+      user: (
+        <>
+          <circle cx="12" cy="8" r="3.5" />
+          <path d="M5 21v-1.5a7 7 0 0 1 14 0V21z" />
+        </>
+      ),
+      server: (
       <>
         <rect x="3" y="3" width="18" height="7" rx="2" />
         <rect x="3" y="14" width="18" height="7" rx="2" />
         <path d="M7 6.5h.01M7 17.5h.01M11 6.5h6M11 17.5h6" />
       </>
-    ),
-    search: (
+      ),
+      cloud: (
+        <path d="M20 16.2A4.2 4.2 0 0 0 18.3 8a6.3 6.3 0 0 0-12-1.2A4.7 4.7 0 0 0 6.7 16H20Z" />
+      ),
+      help: (
+        <>
+          <circle cx="12" cy="12" r="9" />
+          <path d="M9.6 9a2.5 2.5 0 1 1 4.7 1.2c-.8 1.1-2.3 1.3-2.3 3M12 17h.01" />
+        </>
+      ),
+      search: (
       <>
         <circle cx="10.5" cy="10.5" r="6.5" />
         <path d="m16 16 5 5" />

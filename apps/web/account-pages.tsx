@@ -529,13 +529,30 @@ export function SettingsPage({ auth, onChanged, onLogout, onModeChange }: PagePr
             </p>
           </Card>
         )}
-        {!candidate && auth.deviceAccessAvailable && auth.cloudConnected && (
+        {!candidate && auth.cloudConnected && (
           <Card
             title="Offline access"
-            description="Authorize this computer for your existing account."
+            description={
+              auth.deviceAccessAvailable
+                ? 'Authorize this computer for your existing account.'
+                : 'Set up the Windows app with your existing account.'
+            }
             id="offline-access"
           >
             <DeviceAccess auth={auth} onChanged={onChanged} placement="settings" />
+          </Card>
+        )}
+        {!candidate && (auth.hostDownloadUrl || import.meta.env.DEV) && (
+          <Card title="MUDU Host" description="Your MUDU account, on Windows.">
+            <div className="host-download">
+              <a className="button primary" href={auth.hostDownloadUrl || '/downloads/mudu-host.exe'}>
+                Download for Windows
+              </a>
+              <p className="muted">
+                Windows 10/11 · 64-bit. Sign in with your MUDU account and enable offline access in
+                the app. Only work saved on this computer is available offline.
+              </p>
+            </div>
           </Card>
         )}
         <Card

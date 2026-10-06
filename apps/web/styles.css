@@ -2884,6 +2884,131 @@ strong {
   margin-top: 4px;
 }
 
+.sidebar-account {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.sidebar-account .account-button {
+  width: 100%;
+  padding: 13px 12px;
+  gap: 10px;
+  color: #18243b;
+}
+
+.sidebar-account .account-button:hover {
+  background: #f7f9ff;
+}
+
+.sidebar-account .avatar {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  background: #eef2ff;
+  color: #3453cf;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.sidebar-account-details {
+  min-width: 0;
+  flex: 1;
+  line-height: 1.4;
+}
+
+.sidebar-account-details strong {
+  display: block;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-account .account-button small {
+  margin-top: 3px;
+  font-size: 10px;
+}
+
+.sidebar-account .account-button > svg {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+
+.sidebar-connection {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--line);
+  background: #fafbfe;
+}
+
+.sidebar-connection-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #596579;
+  font-size: 11px;
+}
+
+.sidebar-connection-status .status-dot {
+  width: 6px;
+  height: 6px;
+  margin: 0;
+  background: #8b95a5;
+}
+
+.sidebar-connection-status.online .status-dot {
+  background: var(--green);
+}
+
+.sidebar-connection-status.offline .status-dot {
+  background: #b7791f;
+}
+
+.sidebar-connection-action {
+  padding: 3px 0;
+  border: 0;
+  background: transparent;
+  color: #3453cf;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.sidebar-connection-action:hover {
+  text-decoration: underline;
+}
+
+.sidebar-connection-action:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.sidebar-account :is(a, button):focus-visible {
+  outline: 2px solid #3453cf;
+  outline-offset: -3px;
+}
+
+.host-download {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.host-download p {
+  max-width: 52ch;
+  margin: 0;
+}
+
 .avatar {
   width: 31px;
   height: 31px;
@@ -3514,6 +3639,11 @@ td strong {
   align-self: flex-start;
 }
 
+.question-list {
+  max-width: 900px;
+  margin-inline: auto;
+}
+
 .question-list .inline {
   margin-bottom: 16px;
 }
@@ -3623,6 +3753,7 @@ legend {
 
 .form-section {
   max-width: 790px;
+  margin-inline: auto;
 }
 
 .form-intro {
@@ -3732,7 +3863,8 @@ legend {
 .wizard-actions {
   display: flex;
   justify-content: space-between;
-  max-width: 100%;
+  max-width: 900px;
+  margin-inline: auto;
   border-top: 1px solid var(--line);
   padding-top: 22px;
   margin-top: 29px;
@@ -3810,6 +3942,8 @@ legend {
 .review-grid {
   display: grid;
   grid-template-columns: 1.1fr 1fr;
+  max-width: 900px;
+  margin-inline: auto;
   gap: 22px;
 }
 
@@ -4476,11 +4610,6 @@ progress::-moz-progress-bar {
 
   .workspace-label,
   .host-status,
-  .account-button > span,
-  .sidebar .nav-item:last-child {
-    display: none;
-  }
-
   .sidebar nav {
     margin-left: auto;
   }
@@ -4497,6 +4626,7 @@ progress::-moz-progress-bar {
   }
 
   .sidebar-bottom {
+    width: 100%;
     margin: 0;
   }
 
@@ -5053,6 +5183,11 @@ progress::-moz-progress-bar {
   padding: 0;
   margin: 0;
   min-width: 0;
+}
+
+.assessment-fields > .panel {
+  max-width: 900px;
+  margin-inline: auto;
 }
 
 .registration-next-step {

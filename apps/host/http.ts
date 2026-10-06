@@ -41,6 +41,7 @@ import { WorkspaceConnection } from './workspace-connection.ts';
 import { accountProfile, preferences, savePreferences } from './account-settings.ts';
 
 interface HostOptions {
+  hostDownloadUrl?: string;
   online?: OnlineExecution;
   cloudPreparation?: PreparationStorage;
   preparationKey?: Buffer;
@@ -104,6 +105,11 @@ function csvCell(value: unknown) {
 }
 
 export async function createHandler(db: DatabaseSync, options: HostOptions) {
+  if (options.hostDownloadUrl) {
+    const url = new URL(options.hostDownloadUrl);
+    if (url.protocol !== 'https:' || url.username || url.password)
+      throw new Error('Host download URL must use HTTPS without embedded credentials.');
+  }
   const releaseVersion = String(
     JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8')).version,
   );
@@ -1255,6 +1261,7 @@ export async function createHandler(db: DatabaseSync, options: HostOptions) {
             connection:
               session?.role === 'admin' ? connection.status(rawSession(request)) : undefined,
             preferences: preferences(store, session),
+            hostDownloadUrl: session?.role === 'admin' ? options.hostDownloadUrl : undefined,
             deviceAccessAvailable:
               isLoopback(ip) && !options.candidateListener && options.identityMode !== 'replica',
             deviceAccessEnabled: Boolean(
