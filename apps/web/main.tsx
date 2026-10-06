@@ -38,6 +38,7 @@ const ProfilePage = lazy(() =>
 
 function App() {
   const [auth, setAuth] = useState<AuthState | null>(null);
+  const [routePath, setRoutePath] = useState(location.pathname);
   const [error, setError] = useState('');
   const [feedback, setFeedback] = useState(''),
     [modeBusy, setModeBusy] = useState(false);
@@ -63,6 +64,11 @@ function App() {
   }
   useEffect(() => {
     void refresh();
+  }, []);
+  useEffect(() => {
+    const updatePath = () => setRoutePath(location.pathname);
+    window.addEventListener('popstate', updatePath);
+    return () => window.removeEventListener('popstate', updatePath);
   }, []);
   useEffect(() => {
     document.documentElement.dataset.textSize = auth?.preferences?.textSize ?? 'normal';
@@ -208,7 +214,7 @@ function App() {
         }}
       />
     );
-  const path = location.pathname;
+  const path = routePath;
   const id = path.match(/^\/(?:online\/)?assessments\/([a-f0-9-]+)$/)?.[1];
   const editId = path.match(/^\/assessments\/([a-f0-9-]+)\/edit$/)?.[1];
   return (
@@ -257,7 +263,7 @@ function App() {
             </a>
           )}
           <a
-            className={`nav-item ${path === '/settings' || path === '/profile' ? 'selected' : ''}`}
+            className={`nav-item ${path.startsWith('/settings') || path === '/profile' ? 'selected' : ''}`}
             href="/settings"
           >
             <Icon name="settings" />
@@ -306,8 +312,9 @@ function App() {
                       ? 'Sign-in needed'
                       : 'Local workspace'}
               </span>
-              {auth.deviceAccessEnabled && auth.deviceAccessAvailable && (
-                auth.connection?.needsOnlineSignIn ? (
+              {auth.deviceAccessEnabled &&
+                auth.deviceAccessAvailable &&
+                (auth.connection?.needsOnlineSignIn ? (
                   <a className="sidebar-connection-action" href="/settings#offline-access">
                     Sign in online
                   </a>
@@ -336,8 +343,7 @@ function App() {
                           : 'Retry connection'
                         : 'Work offline'}
                   </button>
-                )
-              )}
+                ))}
             </div>
           </div>
         </div>
@@ -349,6 +355,19 @@ function App() {
             <span className="slash">/</span>
             {path === '/settings' ? (
               'Settings'
+            ) : path.startsWith('/settings/') ? (
+              <>
+                <a href="/settings">Settings</a>
+                <span className="slash">/</span>
+                {{
+                  access: 'Access & connection',
+                  preferences: 'Preferences',
+                  workspace: 'Workspace',
+                  time: 'Time & schedules',
+                  support: 'Help & support',
+                  account: 'Account',
+                }[path.split('/')[2] ?? ''] ?? 'Settings'}
+              </>
             ) : path === '/profile' ? (
               <>
                 <a href="/settings">Settings</a>
@@ -436,9 +455,9 @@ function App() {
           {auth.cloudAvailable && auth.cloudConnected && path.startsWith('/question-bank') && (
             <BankCloudStatus />
           )}
-          {path === '/settings' || path === '/profile' ? (
+          {path === '/settings' || path.startsWith('/settings/') || path === '/profile' ? (
             <Suspense fallback={<Loading />}>
-              {path === '/settings' ? (
+              {path.startsWith('/settings') ? (
                 <SettingsPage
                   auth={auth}
                   onChanged={refresh}
