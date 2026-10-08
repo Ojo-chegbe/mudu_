@@ -2,7 +2,7 @@ import { StrictMode, Suspense, lazy, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { AuthState, WorkspaceConnectionState } from '../../packages/contracts/http.ts';
 import { api, ApiError, errorMessage, setCsrf } from './api.ts';
-import { Brand, Icon, Loading, Notice } from './ui.tsx';
+import { Brand, Icon, Loading, Notice, useDisabledButtonHints } from './ui.tsx';
 import { AdministratorAccess, ConnectWorkspace } from './administrator-access.tsx';
 import { BankCloudStatus } from './bank-cloud-status.tsx';
 import { Dashboard, Detail } from './workspace.tsx';
@@ -37,6 +37,7 @@ const ProfilePage = lazy(() =>
 );
 
 function App() {
+  useDisabledButtonHints();
   const [auth, setAuth] = useState<AuthState | null>(null);
   const [routePath, setRoutePath] = useState(location.pathname);
   const [error, setError] = useState('');

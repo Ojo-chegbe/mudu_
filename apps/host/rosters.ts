@@ -21,7 +21,7 @@ export class Rosters {
   list(owner: string): RosterSummary[] {
     return this.db
       .prepare(
-        `SELECT r.id,r.name,r.revision,r.archived,r.is_open,r.restricted,r.updated_at,
+        `SELECT r.id,r.name,r.description,r.revision,r.archived,r.is_open,r.restricted,r.updated_at,
       (SELECT COUNT(*) FROM roster_members WHERE roster_id=r.id AND status='approved') approved,
       (SELECT COUNT(*) FROM roster_members WHERE roster_id=r.id AND status='pending') pending,
       (SELECT COUNT(*) FROM roster_entries WHERE roster_id=r.id) listed
@@ -52,6 +52,7 @@ export class Rosters {
   }
   save(id: string, owner: string, input: Record<string, unknown>) {
     const name = text(input.name, 'Roster name', 160);
+    const description = text(input.description ?? '', 'Roster description', 500, 0);
     if (!Array.isArray(input.entries) || input.entries.length > 500)
       throw new DomainError('Use at most 500 roster entries.');
     const entries = input.entries.map((value) => {
@@ -79,10 +80,11 @@ export class Rosters {
       if (existing)
         this.db
           .prepare(
-            'UPDATE rosters SET name=?,restricted=?,is_open=?,archived=?,revision=revision+1,updated_at=? WHERE id=?',
+            'UPDATE rosters SET name=?,description=?,restricted=?,is_open=?,archived=?,revision=revision+1,updated_at=? WHERE id=?',
           )
           .run(
             name,
+            description,
             Number(input.restricted),
             Number(input.open),
             Number(input.archived),
@@ -91,7 +93,9 @@ export class Rosters {
           );
       else
         this.db
-          .prepare('INSERT INTO rosters VALUES(?,?,?,?,?,?,?,1,?)')
+          .prepare(
+            'INSERT INTO rosters(id,owner_id,name,token,restricted,is_open,archived,revision,updated_at,description) VALUES(?,?,?,?,?,?,?,1,?,?)',
+          )
           .run(
             id,
             owner,
@@ -101,6 +105,7 @@ export class Rosters {
             Number(input.open),
             Number(input.archived),
             this.store.now(),
+            description,
           );
       this.db.prepare('DELETE FROM roster_entries WHERE roster_id=?').run(id);
       for (const e of entries)

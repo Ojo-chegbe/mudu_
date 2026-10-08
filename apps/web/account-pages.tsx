@@ -227,6 +227,17 @@ export function ProfilePage({ auth, onChanged, onLogout }: PageProps) {
                   <button
                     className="button primary"
                     disabled={busy || !dirty || !name.trim() || !canEdit}
+                    data-disabled-reason={
+                      busy
+                        ? 'Please wait while your profile is being saved.'
+                        : !canEdit
+                          ? 'Reconnect online to edit a connected profile.'
+                          : !name.trim()
+                            ? 'Enter your name before saving.'
+                            : !dirty
+                              ? 'There are no profile changes to save.'
+                              : undefined
+                    }
                   >
                     {busy ? 'Saving…' : 'Save profile'}
                   </button>
@@ -456,9 +467,7 @@ export function SettingsPage({ auth, onChanged, onLogout, onModeChange }: PagePr
     const updateSection = () => {
       const requested = sections[location.pathname.split('/')[2] ?? ''];
       setActiveSection(
-        requested && (!candidate || requested !== 'settings-access')
-          ? requested
-          : defaultSection,
+        requested && (!candidate || requested !== 'settings-access') ? requested : defaultSection,
       );
     };
     window.addEventListener('popstate', updateSection);
@@ -739,7 +748,17 @@ export function SettingsPage({ auth, onChanged, onLogout, onModeChange }: PagePr
                     hidden.
                   </p>
                   <div className="actions">
-                    <button className="button primary" disabled={busy || !dirty}>
+                    <button
+                      className="button primary"
+                      disabled={busy || !dirty}
+                      data-disabled-reason={
+                        busy
+                          ? 'Please wait while your preferences are being saved.'
+                          : !dirty
+                            ? 'There are no preference changes to save.'
+                            : undefined
+                      }
+                    >
                       {busy ? 'Saving…' : 'Save preferences'}
                     </button>
                     {dirty && (

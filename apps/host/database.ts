@@ -7,7 +7,7 @@ export function openDatabase(path: string): DatabaseSync {
     'PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;',
   );
   const version = Number(db.prepare('PRAGMA user_version').get()?.user_version);
-  if (version > 20) {
+  if (version > 21) {
     db.close();
     throw new Error('This database needs a newer version of MUDU Host.');
   }
@@ -468,6 +468,17 @@ export function openDatabase(path: string): DatabaseSync {
       PRAGMA user_version=20;
     `),
     );
+  }
+  if (version < 21) {
+    const hasRosterDescription = db
+      .prepare('PRAGMA table_info(rosters)')
+      .all()
+      .some((column) => column.name === 'description');
+    transaction(db, () => {
+      if (!hasRosterDescription)
+        db.exec("ALTER TABLE rosters ADD COLUMN description TEXT NOT NULL DEFAULT ''");
+      db.exec('PRAGMA user_version=21');
+    });
   }
   return db;
 }

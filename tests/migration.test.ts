@@ -38,7 +38,7 @@ test('v12 workspace migration preserves the Host password, sessions and creation
     db.close();
     db = openDatabase(path);
     const migrated = new ExamStore(db);
-    assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 20);
+    assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 21);
     assert.equal(
       db.prepare('SELECT password_hash FROM administrators WHERE id=?').get('host')!.password_hash,
       'original-verifier',
@@ -103,7 +103,7 @@ test('v1 migration backs up and preserves existing attempts, responses, credenti
     db.close();
     db = openDatabase(path);
     store = new ExamStore(db, () => 1001000);
-    assert.equal(db.prepare('PRAGMA user_version').get()?.user_version, 20);
+    assert.equal(db.prepare('PRAGMA user_version').get()?.user_version, 21);
     assert.deepEqual(store.findAttempt(sitting.id, 'legacy-student'), attempt);
     assert.deepEqual(store.responses(attempt.id)[question.id].value, question.correctOptionIds);
     assert.equal(
@@ -201,7 +201,7 @@ test('v6 upgrade backs up data and assigns stable application references without
     db.close();
     db = openDatabase(path);
     const migrated = new IdentityService(new ExamStore(db));
-    assert.equal(db.prepare('PRAGMA user_version').get()?.user_version, 20);
+    assert.equal(db.prepare('PRAGMA user_version').get()?.user_version, 21);
     assert.equal(migrated.profile(accountId).identifier, '001');
     assert.equal(
       db.prepare('SELECT password_hash FROM accounts WHERE id=?').get(accountId)?.password_hash,

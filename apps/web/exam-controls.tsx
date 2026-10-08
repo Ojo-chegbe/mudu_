@@ -238,6 +238,11 @@ export function ExamControlPanel({
               type="button"
               className="button secondary"
               disabled={stale}
+              data-disabled-reason={
+                stale
+                  ? 'These controls changed elsewhere. Refresh the assessment to load the latest state.'
+                  : undefined
+              }
               onClick={() => setAction('announce')}
             >
               Announcement
@@ -246,6 +251,11 @@ export function ExamControlPanel({
               type="button"
               className="button secondary"
               disabled={stale}
+              data-disabled-reason={
+                stale
+                  ? 'These controls changed elsewhere. Refresh the assessment to load the latest state.'
+                  : undefined
+              }
               onClick={() => setAction('extend')}
             >
               Extra time
@@ -318,6 +328,11 @@ export function CandidateControlActions({
             type="button"
             className="text-button"
             disabled={stale}
+            data-disabled-reason={
+              stale
+                ? 'These controls changed elsewhere. Refresh the assessment to load the latest state.'
+                : undefined
+            }
             onClick={() => setAction('extend')}
           >
             Add extra time
@@ -326,6 +341,11 @@ export function CandidateControlActions({
             type="button"
             className="text-button control-danger"
             disabled={stale}
+            data-disabled-reason={
+              stale
+                ? 'These controls changed elsewhere. Refresh the assessment to load the latest state.'
+                : undefined
+            }
             onClick={() => setAction('force_submit')}
           >
             Submit saved answers

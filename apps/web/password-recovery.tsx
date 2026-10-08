@@ -292,7 +292,17 @@ export function PasswordRecoveryPage({ available }: { available: boolean }) {
                 </label>
               )}
               {error && <Notice>{error}</Notice>}
-              <button className="button primary full" disabled={busy || cooldown > 0}>
+              <button
+                className="button primary full"
+                disabled={busy || cooldown > 0}
+                data-disabled-reason={
+                  busy
+                    ? 'Please wait while the recovery email is being sent.'
+                    : cooldown > 0
+                      ? `Wait ${cooldown} seconds before requesting another recovery email.`
+                      : undefined
+                }
+              >
                 {busy
                   ? 'Sending…'
                   : sent

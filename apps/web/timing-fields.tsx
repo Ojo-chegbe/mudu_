@@ -172,6 +172,9 @@ export function TimingFields({
                 key={label}
                 className="schedule-shortcut"
                 disabled={!timing.opensAt}
+                data-disabled-reason={
+                  !timing.opensAt ? 'Set the opening date and time first.' : undefined
+                }
                 aria-pressed={Boolean(
                   timing.opensAt && timing.lastStartAt === timing.opensAt + Number(minutes) * 60000,
                 )}
@@ -222,6 +225,13 @@ export function TimingFields({
                   type="button"
                   className="text-button"
                   disabled={!timing.lastStartAt || duration <= 0}
+                  data-disabled-reason={
+                    !timing.lastStartAt
+                      ? 'Set the last chance to begin first.'
+                      : duration <= 0
+                        ? 'Set a duration greater than zero first.'
+                        : undefined
+                  }
                   onClick={() =>
                     onChange({ ...timing, finishBy: timing.lastStartAt! + duration * 60000 })
                   }

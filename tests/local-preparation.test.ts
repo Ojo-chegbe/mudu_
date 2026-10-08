@@ -479,7 +479,7 @@ test('an actual database reopen retains sealed preparation, hashed admission and
     for (const name of readdirSync(directory)) unlinkSync(join(directory, name));
     rmdirSync(directory);
   });
-  assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 20);
+  assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 21);
   assert.equal(db.prepare('PRAGMA foreign_key_check').all().length, 0);
   assert.equal(prep.status(f.owner, f.paper.id).preparation!.state, 'ready');
   assert.doesNotThrow(() => prep.assertLaunch(f.owner, p.runId));

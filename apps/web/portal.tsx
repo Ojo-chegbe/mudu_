@@ -57,6 +57,9 @@ export function CandidatePortal({
   const [error, setError] = useState('');
   const [filter, setFilter] = useState('all');
   const hasAccount = auth.role === 'candidate' && Boolean(auth.accountId);
+  const accountPage = ['/exam/profile', '/exam/settings'].includes(location.pathname);
+  const candidateName = profile?.name ?? auth.name ?? 'My account';
+  const candidateInitial = candidateName.trim().charAt(0).toUpperCase() || 'C';
   useEffect(() => {
     let alive = true;
     async function load() {
@@ -199,27 +202,63 @@ export function CandidatePortal({
     ) ?? [];
   return (
     <div className="candidate-app">
-      <header className="candidate-header">
+      <header className="candidate-header candidate-portal-header">
         <Brand />
-        <a href="/exam" className="candidate-header-label">
-          My examinations
-        </a>
+        <nav className="candidate-primary-nav" aria-label="Candidate navigation">
+          <a
+            href="/exam"
+            className={location.pathname === '/exam' ? 'active' : ''}
+            aria-current={location.pathname === '/exam' ? 'page' : undefined}
+          >
+            <Icon name="paper" size={17} />
+            My examinations
+          </a>
+        </nav>
         {hasAccount && (
-          <div className="actions">
-            {!auth.offlineAdmission && (
+          <div className="candidate-header-tools">
+            {!auth.offlineAdmission ? (
               <>
-                <a className="text-button" href="/exam/profile">
-                  Profile
-                </a>
-                <a className="text-button" href="/exam/settings">
-                  Settings
-                </a>
                 <Notifications showBadge={auth.preferences?.notificationBadge} />
+                <details className={`candidate-account-menu${accountPage ? ' current' : ''}`}>
+                  <summary aria-label={`Account menu for ${candidateName}`}>
+                    <span className="candidate-account-avatar" aria-hidden="true">
+                      {candidateInitial}
+                    </span>
+                    <span className="candidate-account-name">{candidateName}</span>
+                    <Icon name="chevron" size={15} />
+                  </summary>
+                  <div className="candidate-account-dropdown">
+                    <div className="candidate-account-heading">
+                      <strong>{candidateName}</strong>
+                      <span>Candidate account</span>
+                    </div>
+                    <a
+                      href="/exam/profile"
+                      aria-current={location.pathname === '/exam/profile' ? 'page' : undefined}
+                    >
+                      <Icon name="user" size={16} />
+                      Profile
+                    </a>
+                    <a
+                      href="/exam/settings"
+                      aria-current={location.pathname === '/exam/settings' ? 'page' : undefined}
+                    >
+                      <Icon name="settings" size={16} />
+                      Settings
+                    </a>
+                    <button type="button" onClick={onLogout}>
+                      <Icon name="logout" size={16} />
+                      Sign out
+                    </button>
+                  </div>
+                </details>
               </>
+            ) : (
+              <button className="candidate-signout" type="button" onClick={onLogout}>
+                <Icon name="logout" size={16} />
+                Sign out
+              </button>
             )}
-            <button className="text-button" onClick={onLogout}>
-              Sign out
-            </button>
           </div>
         )}
       </header>

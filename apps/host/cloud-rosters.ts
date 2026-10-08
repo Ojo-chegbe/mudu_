@@ -56,6 +56,7 @@ function validatedGroup(group: CloudCandidateGroup, userId: string): CloudCandid
       version: 1,
       id: group.id,
       name: group.name,
+      description: '',
       token: group.token,
       open: group.open,
       archived: group.archived,
@@ -136,6 +137,7 @@ export function parseCloudRoster(payload: string): CloudRosterDocument {
     version: 1,
     id: r.id as string,
     name: text(r.name, 'Roster name', 160),
+    description: text(r.description ?? '', 'Roster description', 500, 0),
     token: r.token as string,
     open: r.open,
     restricted: r.restricted,
@@ -215,6 +217,7 @@ export class CloudRosters {
         version: 1,
         id,
         name: r.name,
+        description: r.description,
         token: r.token,
         restricted: Boolean(r.restricted),
         open: Boolean(r.is_open),
@@ -299,9 +302,10 @@ export class CloudRosters {
       const accounts = doc.members.map((m) => ({ m, id: this.account(m) }));
       if (existing)
         db.prepare(
-          'UPDATE rosters SET name=?,token=?,restricted=?,is_open=?,archived=?,revision=revision+1,updated_at=? WHERE id=?',
+          'UPDATE rosters SET name=?,description=?,token=?,restricted=?,is_open=?,archived=?,revision=revision+1,updated_at=? WHERE id=?',
         ).run(
           doc.name,
+          doc.description,
           doc.token,
           Number(doc.restricted),
           Number(doc.open),
@@ -310,7 +314,9 @@ export class CloudRosters {
           doc.id,
         );
       else
-        db.prepare('INSERT INTO rosters VALUES(?,?,?,?,?,?,?,1,?)').run(
+        db.prepare(
+          'INSERT INTO rosters(id,owner_id,name,token,restricted,is_open,archived,revision,updated_at,description) VALUES(?,?,?,?,?,?,?,1,?,?)',
+        ).run(
           doc.id,
           owner,
           doc.name,
@@ -319,6 +325,7 @@ export class CloudRosters {
           Number(doc.open),
           Number(doc.archived),
           updatedAt,
+          doc.description,
         );
       db.prepare('DELETE FROM roster_members WHERE roster_id=?').run(doc.id);
       db.prepare('DELETE FROM roster_entries WHERE roster_id=?').run(doc.id);

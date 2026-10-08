@@ -987,6 +987,13 @@ function AssessmentCreation({
                     <select
                       value={useRoster ? (roster?.id ?? '') : ''}
                       disabled={rosterBusy || !rostersLoaded}
+                      data-disabled-reason={
+                        rosterBusy
+                          ? 'Please wait while rosters are loading.'
+                          : !rostersLoaded
+                            ? 'Rosters have not finished loading yet.'
+                            : undefined
+                      }
                       onChange={(e) => {
                         if (!useRoster && candidates.length && e.target.value)
                           setPendingRoster(e.target.value);
@@ -1257,6 +1264,11 @@ function AssessmentCreation({
                       type="button"
                       className="icon-button"
                       disabled={accessMode === 'legacy' && candidates.length === 1}
+                      data-disabled-reason={
+                        accessMode === 'legacy' && candidates.length === 1
+                          ? 'An assessment needs at least one candidate.'
+                          : undefined
+                      }
                       aria-label={`Remove candidate ${index + 1}`}
                       onClick={() => {
                         setCandidates(candidates.filter((_, i) => i !== index));
@@ -1272,6 +1284,11 @@ function AssessmentCreation({
                 className="button secondary"
                 type="button"
                 disabled={candidates.length >= 500}
+                data-disabled-reason={
+                  candidates.length >= 500
+                    ? 'Assessments can include up to 500 candidates.'
+                    : undefined
+                }
                 onClick={() => {
                   setCandidates([...candidates, candidate()]);
                   setKeysSaved(false);
@@ -1423,6 +1440,13 @@ function AssessmentCreation({
                 setError('');
               }}
               disabled={step === 0 || busy}
+              data-disabled-reason={
+                busy
+                  ? 'Please wait while the assessment is being created.'
+                  : step === 0
+                    ? 'You are already on the first step.'
+                    : undefined
+              }
             >
               <Icon name="back" size={16} />
               Back
@@ -1436,6 +1460,19 @@ function AssessmentCreation({
                   (useRoster || !legacyVisible) &&
                   (!useRoster || !roster || !candidates.length)) ||
                 (step === 3 && accessMode === 'legacy' && !keysSaved)
+              }
+              data-disabled-reason={
+                busy
+                  ? 'Please wait while the assessment is being created.'
+                  : rosterBusy
+                    ? 'Please wait while rosters are loading.'
+                    : step === 2 && (useRoster || !legacyVisible) && !useRoster
+                      ? 'Select a roster before continuing.'
+                      : step === 2 && (useRoster || !legacyVisible) && !candidates.length
+                        ? 'Add at least one candidate before continuing.'
+                        : step === 3 && accessMode === 'legacy' && !keysSaved
+                          ? 'Save or create the candidate access keys before continuing.'
+                          : undefined
               }
             >
               {busy

@@ -199,7 +199,13 @@ export function BankEditor({ id }: { id?: string }) {
           void save('draft');
         }}
       >
-        <fieldset disabled={busy || project.archived} className="assessment-fields">
+        <fieldset
+          disabled={busy || project.archived}
+          data-disabled-reason={
+            project.archived ? 'This project is archived. Restore it before editing.' : undefined
+          }
+          className="assessment-fields"
+        >
           <section className="panel padded">
             <div className="bank-grid">
               <label>
@@ -287,6 +293,11 @@ export function BankEditor({ id }: { id?: string }) {
                       type="button"
                       className="text-button"
                       disabled={q.options.length <= 2}
+                      data-disabled-reason={
+                        q.options.length <= 2
+                          ? 'A question needs at least two answer options.'
+                          : undefined
+                      }
                       aria-label={`Remove option ${index + 1}`}
                       onClick={() =>
                         changeQuestion({
@@ -305,6 +316,11 @@ export function BankEditor({ id }: { id?: string }) {
                   type="button"
                   className="text-button"
                   disabled={q.options.length >= 8}
+                  data-disabled-reason={
+                    q.options.length >= 8
+                      ? 'A question can have up to eight answer options.'
+                      : undefined
+                  }
                   onClick={() => changeQuestion({ options: [...q.options, ''] })}
                 >
                   Add an option
@@ -408,6 +424,13 @@ export function BankEditor({ id }: { id?: string }) {
                   className="button primary"
                   type="button"
                   disabled={!reviewed || !q.prompt.trim()}
+                  data-disabled-reason={
+                    !reviewed
+                      ? 'Confirm that you checked the question, answer and marks before approving.'
+                      : !q.prompt.trim()
+                        ? 'Add the question text before approving it.'
+                        : undefined
+                  }
                   onClick={() => void save('approved')}
                 >
                   {busy ? 'Saving…' : 'Approve & save'}

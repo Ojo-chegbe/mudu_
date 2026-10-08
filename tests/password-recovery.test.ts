@@ -36,7 +36,7 @@ test('v17 upgrade and database restarts preserve encrypted grants, completion re
   );
   db.close();
   db = openDatabase(path);
-  assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 20);
+  assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 21);
   assert.ok(existsSync(path + '.before-v18'));
   const key = randomBytes(32),
     userId = randomUUID();

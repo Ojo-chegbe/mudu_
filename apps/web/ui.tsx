@@ -1,6 +1,73 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { InputHTMLAttributes, ReactNode } from 'react';
 
+export function useDisabledButtonHints() {
+  useEffect(() => {
+    const tooltip = document.createElement('div');
+    tooltip.className = 'disabled-button-tooltip';
+    tooltip.setAttribute('role', 'tooltip');
+    tooltip.setAttribute('aria-live', 'polite');
+    tooltip.hidden = true;
+    document.body.append(tooltip);
+
+    let activeButton: HTMLButtonElement | null = null;
+    let showTimer = 0;
+    const hide = () => {
+      window.clearTimeout(showTimer);
+      activeButton = null;
+      tooltip.hidden = true;
+    };
+    const move = (event: PointerEvent) => {
+      const target = document.elementFromPoint(event.clientX, event.clientY);
+      const button = target?.closest<HTMLButtonElement>('button:disabled') ?? null;
+      if (!button) {
+        hide();
+        return;
+      }
+
+      const fieldset = button.closest<HTMLElement>('fieldset[disabled]');
+      const busyLabel = /(?:saving|loading|sync(?:ing)?|processing|creating|sending|please wait|retrying|uploading|starting|submitting|preparing|checking|refreshing|approving|removing|deleting|restoring|publishing|connecting|signing in|signing out|verifying|generating|importing|exporting|inviting|adding|updating|marking|ending)[…\.\s]/i.test(
+        button.textContent ?? '',
+      );
+      const reason =
+        button.dataset.disabledReason ??
+        fieldset?.dataset.disabledReason ??
+        button.title ??
+        (fieldset
+          ? 'Please wait until this form has finished processing.'
+          : busyLabel
+            ? 'Please wait for the current action to finish.'
+            : 'This action is unavailable because its requirements are not met yet. Complete the required steps shown on this page.');
+      button.title = reason;
+      if (button !== activeButton) {
+        hide();
+        activeButton = button;
+        tooltip.textContent = reason;
+        showTimer = window.setTimeout(() => {
+          if (activeButton === button) tooltip.hidden = false;
+        }, 350);
+      }
+
+      const halfWidth = tooltip.offsetWidth / 2;
+      const left = Math.max(
+        halfWidth + 12,
+        Math.min(event.clientX, window.innerWidth - halfWidth - 12),
+      );
+      tooltip.style.left = `${left}px`;
+      const above = event.clientY - tooltip.offsetHeight - 14;
+      tooltip.style.top = `${Math.max(10, Math.min(above, window.innerHeight - tooltip.offsetHeight - 10))}px`;
+    };
+    document.addEventListener('pointermove', move, true);
+    document.addEventListener('pointerdown', hide, true);
+    return () => {
+      document.removeEventListener('pointermove', move, true);
+      document.removeEventListener('pointerdown', hide, true);
+      window.clearTimeout(showTimer);
+      tooltip.remove();
+    };
+  }, []);
+}
+
 export function PasswordInput({
   secretLabel = 'password',
   id,
@@ -81,35 +148,33 @@ export function Icon({ name, size = 20 }: { name: string; size?: number }) {
         <path d="M12 7v5l3 2" />
       </>
     ),
-      people: (
+    people: (
       <>
         <circle cx="9" cy="8" r="3" />
         <path d="M3 21v-3a6 6 0 0 1 12 0v3M16 5a3 3 0 0 1 0 6m2 4a6 6 0 0 1 3 5" />
       </>
-      ),
-      user: (
-        <>
-          <circle cx="12" cy="8" r="3.5" />
-          <path d="M5 21v-1.5a7 7 0 0 1 14 0V21z" />
-        </>
-      ),
-      server: (
+    ),
+    user: (
+      <>
+        <circle cx="12" cy="8" r="3.5" />
+        <path d="M5 21v-1.5a7 7 0 0 1 14 0V21z" />
+      </>
+    ),
+    server: (
       <>
         <rect x="3" y="3" width="18" height="7" rx="2" />
         <rect x="3" y="14" width="18" height="7" rx="2" />
         <path d="M7 6.5h.01M7 17.5h.01M11 6.5h6M11 17.5h6" />
       </>
-      ),
-      cloud: (
-        <path d="M20 16.2A4.2 4.2 0 0 0 18.3 8a6.3 6.3 0 0 0-12-1.2A4.7 4.7 0 0 0 6.7 16H20Z" />
-      ),
-      help: (
-        <>
-          <circle cx="12" cy="12" r="9" />
-          <path d="M9.6 9a2.5 2.5 0 1 1 4.7 1.2c-.8 1.1-2.3 1.3-2.3 3M12 17h.01" />
-        </>
-      ),
-      search: (
+    ),
+    cloud: <path d="M20 16.2A4.2 4.2 0 0 0 18.3 8a6.3 6.3 0 0 0-12-1.2A4.7 4.7 0 0 0 6.7 16H20Z" />,
+    help: (
+      <>
+        <circle cx="12" cy="12" r="9" />
+        <path d="M9.6 9a2.5 2.5 0 1 1 4.7 1.2c-.8 1.1-2.3 1.3-2.3 3M12 17h.01" />
+      </>
+    ),
+    search: (
       <>
         <circle cx="10.5" cy="10.5" r="6.5" />
         <path d="m16 16 5 5" />

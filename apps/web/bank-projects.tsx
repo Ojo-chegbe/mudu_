@@ -92,7 +92,11 @@ export function ProjectDialog({
         }}
       >
         {error && <Notice>{error}</Notice>}
-        <fieldset disabled={busy} className="assessment-fields">
+        <fieldset
+          disabled={busy}
+          data-disabled-reason={busy ? 'Please wait while the project is being saved.' : undefined}
+          className="assessment-fields"
+        >
           <label>
             Project name
             <input
@@ -284,6 +288,13 @@ export function ProjectDirectory({
                   className="project-card"
                   key={project.id}
                   disabled={(picker && !project.counts.approved) || project.id === excludedId}
+                  data-disabled-reason={
+                    picker && !project.counts.approved
+                      ? 'This project has no approved questions to add.'
+                      : project.id === excludedId
+                        ? 'This is the project you already selected.'
+                        : undefined
+                  }
                   onClick={() => onOpen(project)}
                 >
                   {card(project)}
@@ -305,6 +316,7 @@ export function ProjectDirectory({
                   type="button"
                   className="text-button"
                   disabled={!offset}
+                  data-disabled-reason={!offset ? 'You are already on the first page.' : undefined}
                   onClick={() => setOffset(Math.max(0, offset - 30))}
                 >
                   Previous
@@ -313,6 +325,9 @@ export function ProjectDirectory({
                   type="button"
                   className="text-button"
                   disabled={offset + 30 >= data.total}
+                  data-disabled-reason={
+                    offset + 30 >= data.total ? 'There are no more projects to show.' : undefined
+                  }
                   onClick={() => setOffset(offset + 30)}
                 >
                   Next

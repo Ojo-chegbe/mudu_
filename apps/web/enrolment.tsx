@@ -213,7 +213,13 @@ export function RosterEnrolment({
           <p className="field-hint">
             Candidates sign in with email and password. Numbers are not login credentials.
           </p>
-          <button className="button primary" disabled={mode === 'existing' && !selected}>
+          <button
+            className="button primary"
+            disabled={mode === 'existing' && !selected}
+            data-disabled-reason={
+              mode === 'existing' && !selected ? 'Select an existing candidate first.' : undefined
+            }
+          >
             {busy
               ? 'Saving…'
               : mode === 'existing'

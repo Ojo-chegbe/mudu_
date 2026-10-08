@@ -4,6 +4,7 @@ export interface CloudRosterDocument {
   version: 1;
   id: string;
   name: string;
+  description: string;
   token: string;
   restricted: boolean;
   open: boolean;

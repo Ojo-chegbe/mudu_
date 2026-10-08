@@ -376,7 +376,7 @@ test('v8 migration preserves IDs, revisions, approval and ownership in separate 
     db.close();
     db = openDatabase(path);
     bank = new QuestionBank(new ExamStore(db));
-    assert.equal(db.prepare('PRAGMA user_version').get()?.user_version, 20);
+    assert.equal(db.prepare('PRAGMA user_version').get()?.user_version, 21);
     const imported = bank.projects('admin', new URLSearchParams()).items;
     assert.equal(imported.length, 1);
     assert.equal(imported[0].name, 'Imported questions');

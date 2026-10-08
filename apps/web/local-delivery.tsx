@@ -209,6 +209,15 @@ export function LocalDeliveryPage() {
                     <button
                       className="button primary"
                       disabled={busy || !address || !acknowledged}
+                      data-disabled-reason={
+                        busy
+                          ? 'Please wait while the delivery settings are being saved.'
+                          : !address
+                            ? 'Enter a valid recipient address first.'
+                            : !acknowledged
+                              ? 'Confirm the delivery details before continuing.'
+                              : undefined
+                      }
                       onClick={() => change()}
                     >
                       {busy ? 'Starting…' : 'Start local delivery'}

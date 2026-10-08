@@ -255,7 +255,7 @@ test('schema 20 upgrade preserves device grants and persists connection and acco
     db.close();
     db = openDatabase(path);
     assert.ok(existsSync(path + '.before-v20'));
-    assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 20);
+    assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 21);
     assert.equal(
       db.prepare('SELECT offline_setup_completed FROM account_preferences').get()!
         .offline_setup_completed,

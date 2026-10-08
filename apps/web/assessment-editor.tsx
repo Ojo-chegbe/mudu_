@@ -175,7 +175,13 @@ export function AssessmentEditor({ id }: { id: string }) {
           }
         }}
       >
-        <fieldset className="assessment-fields" disabled={busy}>
+        <fieldset
+          className="assessment-fields"
+          disabled={busy}
+          data-disabled-reason={
+            busy ? 'Please wait while the assessment is being saved.' : undefined
+          }
+        >
           <section className="panel padded">
             <h2>Assessment details</h2>
             <label>
@@ -264,6 +270,11 @@ export function AssessmentEditor({ id }: { id: string }) {
                 type="button"
                 className="button secondary"
                 disabled={input.questions.length >= 200}
+                data-disabled-reason={
+                  input.questions.length >= 200
+                    ? 'Assessments can contain up to 200 questions.'
+                    : undefined
+                }
                 onClick={() => setBankOpen(true)}
               >
                 Add from question bank
@@ -272,6 +283,11 @@ export function AssessmentEditor({ id }: { id: string }) {
                 type="button"
                 className="button secondary"
                 disabled={input.questions.length >= 200}
+                data-disabled-reason={
+                  input.questions.length >= 200
+                    ? 'Assessments can contain up to 200 questions.'
+                    : undefined
+                }
                 onClick={() => setGenerateOpen(true)}
               >
                 <Icon name="sparkles" size={16} /> Generate with AI
@@ -287,6 +303,9 @@ export function AssessmentEditor({ id }: { id: string }) {
                     type="button"
                     className="text-button"
                     disabled={index === 0}
+                    data-disabled-reason={
+                      index === 0 ? 'This is already the first question.' : undefined
+                    }
                     aria-label={`Move question ${index + 1} up`}
                     onClick={() => {
                       const items = [...input.questions];
@@ -300,6 +319,11 @@ export function AssessmentEditor({ id }: { id: string }) {
                     type="button"
                     className="text-button membership-action decline"
                     disabled={input.questions.length === 1}
+                    data-disabled-reason={
+                      input.questions.length === 1
+                        ? 'An assessment needs at least one question.'
+                        : undefined
+                    }
                     onClick={() => setRemove(index)}
                   >
                     Remove
@@ -388,6 +412,11 @@ export function AssessmentEditor({ id }: { id: string }) {
                         type="button"
                         className="icon-button"
                         disabled={q.options.length <= 2}
+                        data-disabled-reason={
+                          q.options.length <= 2
+                            ? 'A question needs at least two answer options.'
+                            : undefined
+                        }
                         aria-label={`Remove option ${optionIndex + 1} from question ${index + 1}`}
                         onClick={() =>
                           updateQuestion(index, {
@@ -406,6 +435,11 @@ export function AssessmentEditor({ id }: { id: string }) {
                     type="button"
                     className="text-button"
                     disabled={q.options.length >= 8}
+                    data-disabled-reason={
+                      q.options.length >= 8
+                        ? 'A question can have up to eight answer options.'
+                        : undefined
+                    }
                     onClick={() => updateQuestion(index, { options: [...q.options, ''] })}
                   >
                     Add option
@@ -418,6 +452,11 @@ export function AssessmentEditor({ id }: { id: string }) {
             type="button"
             className="button secondary"
             disabled={input.questions.length >= 200}
+            data-disabled-reason={
+              input.questions.length >= 200
+                ? 'Assessments can contain up to 200 questions.'
+                : undefined
+            }
             onClick={() =>
               update({
                 questions: [
@@ -447,7 +486,11 @@ export function AssessmentEditor({ id }: { id: string }) {
                   : 'Draft saved in this tab'
                 : 'No unsaved changes'}
             </span>
-            <button className="button primary" disabled={!dirty}>
+            <button
+              className="button primary"
+              disabled={!dirty}
+              data-disabled-reason={!dirty ? 'There are no unsaved changes to save.' : undefined}
+            >
               {busy ? 'Saving…' : 'Save changes'}
             </button>
           </div>
@@ -607,7 +650,11 @@ export function RerunAssessment({
         marks and results stay unchanged.
       </p>
       {error && <Notice>{error}</Notice>}
-      <fieldset className="assessment-fields" disabled={busy}>
+      <fieldset
+        className="assessment-fields"
+        disabled={busy}
+        data-disabled-reason={busy ? 'Please wait while the assessment is being saved.' : undefined}
+      >
         <label>
           New assessment title
           <input

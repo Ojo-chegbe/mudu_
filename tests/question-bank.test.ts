@@ -691,7 +691,7 @@ test('v7 migration preserves existing data and bank records survive reopening', 
     );
     db.close();
     db = openDatabase(path);
-    assert.equal(db.prepare('PRAGMA user_version').get()?.user_version, 20);
+    assert.equal(db.prepare('PRAGMA user_version').get()?.user_version, 21);
     assert.equal(
       db.prepare('SELECT password_hash FROM administrators').get()?.password_hash,
       'unchanged',

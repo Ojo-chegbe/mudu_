@@ -318,6 +318,13 @@ export function Candidate({
             className="text-button"
             onClick={onLogout}
             disabled={(attemptStatus === 'active' && unsavedCount > 0) || busy}
+            data-disabled-reason={
+              busy
+                ? 'Please wait for the current action to finish.'
+                : attemptStatus === 'active' && unsavedCount > 0
+                  ? 'Wait for your answers to save before signing out, so none are lost.'
+                  : undefined
+            }
           >
             Sign out
           </button>
@@ -500,6 +507,19 @@ export function Candidate({
           <button
             className="button primary"
             disabled={busy || remaining <= 0 || state.sitting.canStart === false}
+            data-disabled-reason={
+              busy
+                ? 'Please wait while the examination is starting.'
+                : paused
+                  ? 'The examination is paused by the administrator.'
+                  : state.sitting.startRestriction === 'not_open'
+                    ? `This examination opens on ${new Date(state.sitting.opensAt!).toLocaleString()}.`
+                    : state.sitting.canStart === false
+                      ? 'The start window has closed. You can no longer begin this examination.'
+                      : remaining <= 0
+                        ? 'This examination has ended.'
+                        : undefined
+            }
             onClick={start}
           >
             {state.sitting.startRestriction === 'not_open'

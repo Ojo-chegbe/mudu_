@@ -329,6 +329,11 @@ export function Detail({ id }: { id: string }) {
               <button
                 className="button primary"
                 disabled={data.deliveryReady === false}
+                data-disabled-reason={
+                  data.deliveryReady === false
+                    ? 'Complete the assessment setup and delivery checks before publishing.'
+                    : undefined
+                }
                 onClick={() => setConfirm('launch')}
               >
                 {assessment.timing?.mode === 'individual'

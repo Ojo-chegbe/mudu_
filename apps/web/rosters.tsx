@@ -87,7 +87,7 @@ export function RostersPage({ id }: { id?: string }) {
             Create your first roster
           </a>
           <p className="roster-empty-hint">
-            Start with a name. Import a list or invite members with a link.
+            Create a roster first. Then add candidates or invite them to request access.
           </p>
         </section>
       ) : !filtered.length ? (
@@ -117,6 +117,7 @@ export function RostersPage({ id }: { id?: string }) {
                     <a href={`/rosters/${r.id}`}>
                       <strong>{r.name}</strong>
                     </a>
+                    {r.description && <small className="block muted">{r.description}</small>}
                     {Boolean(r.archived) && <small className="block muted">Archived</small>}
                   </td>
                   <td>{r.approved}</td>
@@ -136,6 +137,7 @@ export function RostersPage({ id }: { id?: string }) {
 interface RosterDraft {
   id: string;
   name: string;
+  description: string;
   revision: number;
   restricted: boolean;
   open: boolean;
@@ -148,6 +150,7 @@ function RosterEditor({ routeId }: { routeId: string }) {
   const draftKey = `mudu.roster-draft.${routeId}`;
   const [draft, setDraft] = useState<RosterDraft | null>(null);
   const [data, setData] = useState<RosterDetail | null>(null);
+  const [editingDetails, setEditingDetails] = useState(routeId === 'new');
   const [dirty, setDirty] = useState(false);
   const [storageError, setStorageError] = useState(false);
   const [error, setError] = useState('');
@@ -167,6 +170,7 @@ function RosterEditor({ routeId }: { routeId: string }) {
     return {
       id: r.id,
       name: r.name,
+      description: r.description ?? '',
       revision: r.revision,
       restricted: Boolean(r.restricted),
       open: Boolean(r.is_open),
@@ -194,7 +198,10 @@ function RosterEditor({ routeId }: { routeId: string }) {
                 (e: RosterEntry) => typeof e.name === 'string' && typeof e.identifier === 'string',
               )
             )
-              restored = v;
+              restored = {
+                ...v,
+                description: typeof v.description === 'string' ? v.description : '',
+              };
           }
         } catch {
           setStorageError(true);
@@ -206,6 +213,7 @@ function RosterEditor({ routeId }: { routeId: string }) {
               : {
                   id: browserId(),
                   name: '',
+                  description: '',
                   revision: 0,
                   restricted: false,
                   open: true,
@@ -298,12 +306,26 @@ function RosterEditor({ routeId }: { routeId: string }) {
       <div className="page-heading">
         <div>
           <h1>{data?.name ?? 'Create roster'}</h1>
-          <p className="muted">A reusable group, not a separate candidate account.</p>
+          <p className="muted">
+            {data
+              ? data.description || 'Add a short description to help identify this roster.'
+              : 'Create a reusable candidate group. You can add people next, then choose it for an assessment.'}
+          </p>
         </div>
         {data && (
-          <a className="button secondary" href={`/assessments/new?roster=${data.id}`}>
-            Create assessment
-          </a>
+          <div className="actions roster-heading-actions">
+            <button
+              className="button secondary"
+              type="button"
+              disabled={dirty}
+              onClick={() => setEditingDetails((value) => !value)}
+            >
+              {editingDetails ? 'Done' : 'Edit details'}
+            </button>
+            <a className="button primary" href={`/assessments/new?roster=${data.id}`}>
+              Create assessment
+            </a>
+          </div>
         )}
       </div>
       {error && <Notice>{error}</Notice>}
@@ -311,13 +333,230 @@ function RosterEditor({ routeId }: { routeId: string }) {
       {storageError && (
         <Notice>Draft backup is unavailable. Keep this tab open until you save.</Notice>
       )}
+      {(!data || editingDetails) && (
+        <form
+          className={`panel padded roster-edit-form${!data ? ' roster-create-panel' : ''}`}
+          onSubmit={async (e) => {
+            e.preventDefault();
+            if (busy) return;
+            setBusy(true);
+            setError('');
+            try {
+              const r = await api<RosterDetail>(`/rosters/${draft.id}`, {
+                method: 'POST',
+                body: draft,
+              });
+              setData(r);
+              setDraft(fromServer(r));
+              setDirty(false);
+              if (routeId !== 'new') setEditingDetails(false);
+              saved.current = true;
+              try {
+                sessionStorage.removeItem(draftKey);
+              } catch {}
+              if (routeId === 'new') location.replace(`/rosters/${r.id}`);
+            } catch (e) {
+              setError(errorMessage(e));
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          <fieldset className="assessment-fields" disabled={busy}>
+            {data ? (
+              <h2 className="roster-form-title">Roster details</h2>
+            ) : (
+              <div className="roster-create-intro">
+                <span className="roster-create-icon" aria-hidden="true">
+                  <Icon name="people" size={22} />
+                </span>
+                <div>
+                  <h2>Start with a name</h2>
+                  <p>For example, a class, department or training group.</p>
+                </div>
+              </div>
+            )}
+            <label>
+              Roster name
+              <input
+                required
+                maxLength={160}
+                placeholder="e.g. PCH 401 — 2026 Class"
+                value={draft.name}
+                onChange={(e) => change({ name: e.target.value })}
+              />
+            </label>
+            <label className="roster-description-field">
+              List description <span className="muted small">Optional</span>
+              <textarea
+                maxLength={500}
+                rows={3}
+                placeholder="Describe who this roster is for, such as the course, class or team."
+                value={draft.description}
+                onChange={(e) => change({ description: e.target.value })}
+              />
+              <small className="muted">
+                Shown under the roster name to help people recognize this group.
+              </small>
+            </label>
+            {data && (
+              <details className="roster-advanced-settings">
+                <summary>
+                  Joining rules <span>Optional</span>
+                </summary>
+                <p className="field-hint roster-settings-intro">
+                  These rules control requests from the joining link. Add candidates directly in
+                  “Add to roster”.
+                </p>
+                <div className="roster-setting-options">
+                  <label className="check-label roster-setting-option">
+                    <input
+                      type="checkbox"
+                      checked={draft.open}
+                      onChange={(e) => change({ open: e.target.checked })}
+                    />
+                    <span className="roster-setting-copy">
+                      <strong>Allow requests to join</strong>
+                      <small>
+                        Candidates with the link can ask to join. You review requests below.
+                      </small>
+                    </span>
+                  </label>
+                  <label className="check-label roster-setting-option">
+                    <input
+                      type="checkbox"
+                      checked={draft.restricted}
+                      onChange={(e) => change({ restricted: e.target.checked })}
+                    />
+                    <span className="roster-setting-copy">
+                      <strong>Limit requests to listed candidate IDs</strong>
+                      <small>
+                        Use this when only people on your expected list should be able to request
+                        access.
+                      </small>
+                    </span>
+                  </label>
+                </div>
+                {draft.restricted && (
+                  <div className="roster-expected-list">
+                    <div className="roster-expected-heading">
+                      <strong>Candidate ID list</strong>
+                      <span>Only these candidates can request to join</span>
+                    </div>
+                    <label className="button secondary upload-label">
+                      <Icon name="download" size={15} />
+                      Import CSV
+                      <input
+                        type="file"
+                        accept=".csv,text/csv"
+                        onChange={(e) => {
+                          void importFile(e.target.files?.[0]);
+                          e.target.value = '';
+                        }}
+                      />
+                    </label>
+                    <p className="field-hint">Columns: candidate_id,name · Up to 500 entries</p>
+                    {draft.entries.map((entry, i) => (
+                      <div className="roster-row" key={i}>
+                        <label>
+                          Candidate ID
+                          <input
+                            required
+                            maxLength={80}
+                            value={entry.identifier}
+                            onChange={(e) =>
+                              change({
+                                entries: draft.entries.map((r, j) =>
+                                  j === i ? { ...r, identifier: e.target.value } : r,
+                                ),
+                              })
+                            }
+                          />
+                        </label>
+                        <label>
+                          Name
+                          <input
+                            required
+                            maxLength={160}
+                            value={entry.name}
+                            onChange={(e) =>
+                              change({
+                                entries: draft.entries.map((r, j) =>
+                                  j === i ? { ...r, name: e.target.value } : r,
+                                ),
+                              })
+                            }
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          className="icon-button"
+                          aria-label={`Remove expected entry ${i + 1}`}
+                          onClick={() =>
+                            change({ entries: draft.entries.filter((_, j) => j !== i) })
+                          }
+                        >
+                          <Icon name="close" size={16} />
+                        </button>
+                      </div>
+                    ))}
+                    <button
+                      type="button"
+                      className="button secondary"
+                      disabled={draft.entries.length >= 500}
+                      onClick={() =>
+                        change({ entries: [...draft.entries, { name: '', identifier: '' }] })
+                      }
+                    >
+                      Add candidate ID
+                    </button>
+                  </div>
+                )}
+                <label className="check-label roster-archive-option">
+                  <input
+                    type="checkbox"
+                    checked={draft.archived}
+                    onChange={(e) => change({ archived: e.target.checked })}
+                  />
+                  <span className="roster-setting-copy">
+                    <strong>Close this roster to new requests</strong>
+                    <small>Existing assessment access will stay unchanged.</small>
+                  </span>
+                </label>
+              </details>
+            )}
+            <div className="wizard-actions">
+              <span role="status" className="muted small">
+                {dirty
+                  ? 'Unsaved changes · backed up in this tab when available'
+                  : data
+                    ? 'All changes saved'
+                    : 'Share a joining link after saving'}
+              </span>
+              <button
+                className="button primary"
+                disabled={!draft.name.trim() || (Boolean(data) && !dirty)}
+                data-disabled-reason={
+                  !draft.name.trim()
+                    ? 'Enter a roster name before saving.'
+                    : Boolean(data) && !dirty
+                      ? 'There are no roster changes to save.'
+                      : undefined
+                }
+              >
+                {busy ? 'Saving…' : data ? 'Save changes' : 'Create roster'}
+              </button>
+            </div>
+          </fieldset>
+        </form>
+      )}
       {data && (
         <section className="panel padded">
           <div className="section-heading">
             <div>
-              <h2>Invite your group</h2>
+              <h2>Share a joining link</h2>
               <p className="muted small">
-                Add candidates directly, or share a joining link for membership requests.
+                Candidates can use this link to request to join. Review and approve requests below.
               </p>
             </div>
             <span className="muted small">
@@ -384,6 +623,7 @@ function RosterEditor({ routeId }: { routeId: string }) {
                   : {
                       id: browserId(),
                       name: '',
+                      description: '',
                       revision: 0,
                       restricted: false,
                       open: true,
@@ -418,156 +658,7 @@ function RosterEditor({ routeId }: { routeId: string }) {
           }}
         />
       )}
-      <form
-        className="panel padded"
-        onSubmit={async (e) => {
-          e.preventDefault();
-          if (busy) return;
-          setBusy(true);
-          setError('');
-          try {
-            const r = await api<RosterDetail>(`/rosters/${draft.id}`, {
-              method: 'POST',
-              body: draft,
-            });
-            setData(r);
-            setDraft(fromServer(r));
-            setDirty(false);
-            saved.current = true;
-            try {
-              sessionStorage.removeItem(draftKey);
-            } catch {}
-            if (routeId === 'new') location.replace(`/rosters/${r.id}`);
-          } catch (e) {
-            setError(errorMessage(e));
-          } finally {
-            setBusy(false);
-          }
-        }}
-      >
-        <fieldset className="assessment-fields" disabled={busy}>
-          <label>
-            Roster name
-            <input
-              required
-              maxLength={160}
-              placeholder="e.g. PCH 401 — 2026 Class"
-              value={draft.name}
-              onChange={(e) => change({ name: e.target.value })}
-            />
-          </label>
-          {!data && (
-            <p className="field-hint">
-              Create the roster, then add existing accounts or invite new candidates.
-            </p>
-          )}
-          <details>
-            <summary>Settings & optional eligibility rules</summary>
-            <label className="check-label">
-              <input
-                type="checkbox"
-                checked={draft.open}
-                onChange={(e) => change({ open: e.target.checked })}
-              />
-              Allow new membership requests
-            </label>
-            <label className="check-label">
-              <input
-                type="checkbox"
-                checked={draft.restricted}
-                onChange={(e) => change({ restricted: e.target.checked })}
-              />
-              Only accept requests from IDs on the expected list
-            </label>
-            <label className="check-label">
-              <input
-                type="checkbox"
-                checked={draft.archived}
-                onChange={(e) => change({ archived: e.target.checked })}
-              />
-              Archive roster (closes joining; existing assessments stay unchanged)
-            </label>
-            <p className="field-hint">
-              Optional: limit who can request to join. To enrol someone, use Add to roster above.
-              These rules do not add members.
-            </p>
-            <label className="button secondary upload-label">
-              Import CSV
-              <input
-                type="file"
-                accept=".csv,text/csv"
-                onChange={(e) => {
-                  void importFile(e.target.files?.[0]);
-                  e.target.value = '';
-                }}
-              />
-            </label>
-            <p className="field-hint">Columns: candidate_id,name · Up to 500 entries</p>
-            {draft.entries.map((entry, i) => (
-              <div className="roster-row" key={i}>
-                <label>
-                  Candidate ID
-                  <input
-                    required
-                    maxLength={80}
-                    value={entry.identifier}
-                    onChange={(e) =>
-                      change({
-                        entries: draft.entries.map((r, j) =>
-                          j === i ? { ...r, identifier: e.target.value } : r,
-                        ),
-                      })
-                    }
-                  />
-                </label>
-                <label>
-                  Name
-                  <input
-                    required
-                    maxLength={160}
-                    value={entry.name}
-                    onChange={(e) =>
-                      change({
-                        entries: draft.entries.map((r, j) =>
-                          j === i ? { ...r, name: e.target.value } : r,
-                        ),
-                      })
-                    }
-                  />
-                </label>
-                <button
-                  type="button"
-                  className="icon-button"
-                  aria-label={`Remove expected entry ${i + 1}`}
-                  onClick={() => change({ entries: draft.entries.filter((_, j) => j !== i) })}
-                >
-                  <Icon name="close" size={16} />
-                </button>
-              </div>
-            ))}
-            <button
-              type="button"
-              className="button secondary"
-              disabled={draft.entries.length >= 500}
-              onClick={() => change({ entries: [...draft.entries, { name: '', identifier: '' }] })}
-            >
-              Add eligibility rule
-            </button>
-          </details>
-          <div className="wizard-actions">
-            <span role="status" className="muted small">
-              {dirty
-                ? 'Unsaved changes · backed up in this tab when available'
-                : data
-                  ? 'Saved'
-                  : 'Share a joining link after saving'}
-            </span>
-            <button className="button primary">
-              {busy ? 'Saving…' : data ? 'Save changes' : 'Create roster'}
-            </button>
-          </div>
-        </fieldset>
-      </form>
+
       {data && (
         <section className="panel padded">
           <div className="section-heading">

@@ -97,6 +97,13 @@ export function SubmissionReview({
               <button
                 type="button"
                 disabled={busy || expired}
+                data-disabled-reason={
+                  busy
+                    ? 'Please wait while the submission is being processed.'
+                    : expired
+                      ? 'The time allowed for this examination has ended.'
+                      : undefined
+                }
                 onClick={() => onQuestion(i)}
                 aria-label={`Review question ${i + 1}, ${q.answered ? 'answered' : 'unanswered'}`}
               >
@@ -126,6 +133,19 @@ export function SubmissionReview({
           type="button"
           className="button primary"
           disabled={busy || paused || !ready || pending > 0 || expired}
+          data-disabled-reason={
+            busy
+              ? 'Please wait while the submission is being processed.'
+              : paused
+                ? 'The examination is paused by the administrator.'
+                : pending > 0
+                  ? 'Wait for your answers to finish saving.'
+                  : expired
+                    ? 'The time allowed for this examination has ended.'
+                    : !ready
+                      ? 'Your answers are still being prepared.'
+                      : undefined
+          }
           onClick={onSubmit}
         >
           {paused ? 'Examination paused' : busy ? 'Submitting…' : 'Confirm submission'}

@@ -436,7 +436,7 @@ test('v14 upgrade preserves candidates and sessions; connected bindings and encr
   db.close();
   db = openDatabase(path);
   store = new ExamStore(db);
-  assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 20);
+  assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 21);
   assert.ok(existsSync(`${path}.before-v15`));
   assert.equal(store.session(original.raw)!.account_id, id);
   const linked = new CloudCandidates(store, key).open(value, id);

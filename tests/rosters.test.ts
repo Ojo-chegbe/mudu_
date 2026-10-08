@@ -23,6 +23,7 @@ test('approved roster additions are admitted automatically while existing attemp
   const id = randomUUID();
   const input = {
     name: 'Class of 2026',
+    description: 'All first-year nursing students.',
     revision: 0,
     restricted: false,
     open: true,
@@ -30,6 +31,8 @@ test('approved roster additions are admitted automatically while existing attemp
     entries: [],
   };
   const roster = rosters.save(id, 'admin', input);
+  assert.equal(roster.description, input.description);
+  assert.equal(rosters.list('admin')[0].description, input.description);
   assert.throws(() => rosters.get(id, 'another-admin'), /not found/);
   assert.throws(() => rosters.save(id, 'admin', input), /changed/);
   assert.equal(rosters.invitation(roster.token).status, null);

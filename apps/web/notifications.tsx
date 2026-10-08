@@ -130,6 +130,13 @@ export function Notifications({ showBadge = true }: { showBadge?: boolean }) {
           <button
             className="text-button"
             disabled={busy || !feed?.items.some((n) => n.readAt === null)}
+            data-disabled-reason={
+              busy
+                ? 'Please wait while notifications are being updated.'
+                : !feed?.items.some((n) => n.readAt === null)
+                  ? 'There are no unread notifications to mark as read.'
+                  : undefined
+            }
             onClick={() =>
               void markRead(feed!.items.filter((n) => n.readAt === null).map((n) => n.id))
             }

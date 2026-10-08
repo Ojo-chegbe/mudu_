@@ -363,6 +363,15 @@ export function CloudSyncPage({ recordId }: { recordId?: string }) {
                     <button
                       className="button primary"
                       disabled={!canSync || busy || !selectedIds.length}
+                      data-disabled-reason={
+                        busy
+                          ? 'Please wait while synchronization is in progress.'
+                          : !canSync
+                            ? 'Connect this workspace to your MUDU account before syncing.'
+                            : !selectedIds.length
+                              ? 'Select at least one completed examination to sync.'
+                              : undefined
+                      }
                       onClick={() => void queue()}
                     >
                       {queueProgress
@@ -426,6 +435,15 @@ export function CloudSyncPage({ recordId }: { recordId?: string }) {
                                   aria-label={`Select ${exam.title}`}
                                   checked={selection.has(exam.id)}
                                   disabled={!canSync || Boolean(pending) || busy}
+                                  data-disabled-reason={
+                                    busy
+                                      ? 'Please wait while synchronization is in progress.'
+                                      : !canSync
+                                        ? 'Connect this workspace to your MUDU account before selecting exams.'
+                                        : pending
+                                          ? 'This examination already has a sync in progress. Wait for it to finish.'
+                                          : undefined
+                                  }
                                   onChange={() => choose(exam.id)}
                                 />
                               </td>

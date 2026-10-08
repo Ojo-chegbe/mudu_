@@ -140,7 +140,17 @@ function MarkQuestion({
             }}
           />
         </label>
-        <button className="button primary" disabled={busy || saved}>
+        <button
+          className="button primary"
+          disabled={busy || saved}
+          data-disabled-reason={
+            busy
+              ? 'Please wait while the mark is being saved.'
+              : saved
+                ? 'This mark is already saved.'
+                : undefined
+          }
+        >
           {busy ? 'Saving…' : saved ? 'Saved' : 'Save mark'}
         </button>
         <span role="status" className="muted small">

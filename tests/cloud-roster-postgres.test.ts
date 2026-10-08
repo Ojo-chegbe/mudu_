@@ -60,6 +60,7 @@ test('PostgreSQL roster migration isolates owners, authenticates candidates, pro
     version: 1,
     id: randomUUID(),
     name: 'Pharmacy class',
+    description: 'Candidates enrolled in the pharmacy class.',
     token: 'g'.repeat(43),
     restricted: false,
     open: true,

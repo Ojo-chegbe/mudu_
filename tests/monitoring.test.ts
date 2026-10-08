@@ -133,7 +133,7 @@ test('presence has referential integrity and preserves existing examination stat
   const f = fixture(t);
   const sitting = f.store.launch(f.exam.id, 'admin');
   const attempt = f.store.start(sitting.id, 'one');
-  assert.equal(f.db.prepare('PRAGMA user_version').get()?.user_version, 20);
+  assert.equal(f.db.prepare('PRAGMA user_version').get()?.user_version, 21);
   assert.deepEqual(f.store.findAttempt(sitting.id, 'one'), attempt);
   assert.throws(() =>
     f.db.prepare('INSERT INTO candidate_presence VALUES(?,?,?,?)').run('missing', 'one', 0, 0),
@@ -163,7 +163,7 @@ test('v10 database upgrade preserves attempts; presence survives a real database
     db = openDatabase(path);
     store = new ExamStore(db, () => now);
     const monitor = new LiveMonitoring(store);
-    assert.equal(db.prepare('PRAGMA user_version').get()?.user_version, 20);
+    assert.equal(db.prepare('PRAGMA user_version').get()?.user_version, 21);
     assert.deepEqual(store.findAttempt(sitting.id, 'one'), attempt);
     monitor.heartbeat(sitting.id, 'one');
     now += disconnectAfterMs;

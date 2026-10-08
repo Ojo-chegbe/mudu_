@@ -5,6 +5,7 @@ export interface RosterEntry {
 export interface RosterSummary {
   id: string;
   name: string;
+  description: string;
   revision: number;
   archived: number;
   is_open: number;

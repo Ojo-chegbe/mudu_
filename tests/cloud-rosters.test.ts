@@ -176,6 +176,7 @@ function fixture(t: TestContext, storage: MemoryRosters, cloud: CloudSession) {
   const create = () =>
     rosters.save(randomUUID(), owner, {
       name: 'Class',
+      description: 'Candidates in the annual class.',
       revision: 0,
       restricted: false,
       open: true,
@@ -212,6 +213,7 @@ test('rosters, links, joining requests, approvals and invitations follow their o
   await a.sync.ensure(a.owner, true);
   await b.sync.ensure(b.owner, true);
   assert.equal(b.rosters.get(r.id, b.owner).token, r.token);
+  assert.equal(b.rosters.get(r.id, b.owner).description, r.description);
   await other.sync.ensure(other.owner, true);
   assert.equal(other.rosters.list(other.owner).length, 0);
   const who = identity('candidate@example.test');

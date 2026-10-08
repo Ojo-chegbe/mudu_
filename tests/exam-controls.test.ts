@@ -277,7 +277,7 @@ test('v11 migration adds controls without rewriting active attempts or saved res
     db.close();
     db = openDatabase(path);
     store = new ExamStore(db, () => 1001000);
-    assert.equal(db.prepare('PRAGMA user_version').get()?.user_version, 20);
+    assert.equal(db.prepare('PRAGMA user_version').get()?.user_version, 21);
     assert.deepEqual(store.findAttempt(sitting.id, 'one'), attempt);
     assert.deepEqual(
       store.responses(attempt.id)[exam.questions[0].id].value,
